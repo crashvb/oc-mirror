@@ -5,30 +5,32 @@
 """OpenShift release helpers."""
 
 import gzip
-import io
 import logging
-import os
 import tarfile
+import time
 
-from gnupg import GPG
 from io import BytesIO
 from json import loads
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+from pretty_bad_protocol import GPG
+from pretty_bad_protocol._parsers import Verify
+from pretty_bad_protocol._util import _make_binary_stream
+from tempfile import TemporaryDirectory
 from typing import Any, cast, Dict, List, Optional, Set, Tuple, TypedDict
 from yaml import load_all, SafeLoader
 
 import pytest
 
 from aiohttp.typedefs import LooseHeaders
+from aiotempfile.aiotempfile import open as aiotempfile
 from docker_registry_client_async import (
     FormattedSHA256,
     ImageName,
 )
 from docker_sign_verify import ImageConfig, RegistryV2Manifest, RegistryV2ImageSource
-from docker_sign_verify.aiotempfile import open as aiotempfile
 from docker_sign_verify.utils import be_kind_rewind, chunk_file
 
+from .atomicsignature import AtomicSignature
 from .imagestream import ImageStream
 from .singleassignment import SingleAssignment
 from .specs import OpenShiftReleaseSpecs
@@ -271,6 +273,21 @@ def _get_tag_mapping(
         yield image_name, name
 
 
+def _import_owner_trust(gpg: GPG, trust_data: str):
+    """
+    Imports trust information.
+
+    Args:
+        gpg: GPG object on which to operate.
+        trust_data: The trust data to be imported.
+    """
+    result = gpg._result_map["import"](gpg)
+    data = _make_binary_stream(trust_data, gpg._encoding)
+    gpg._handle_io(["--import-ownertrust"], data, result, binary=True)
+    data.close()
+    return result
+
+
 async def _search_layer(
     registry_v2_image_source: RegistryV2ImageSource,
     release_image_name: ImageName,
@@ -368,13 +385,19 @@ async def _verify_release_metadata(
         for key in keys:
             gpg.import_keys(key)
 
+        # Would be nice if this method was built-in ... =/
+        for key in gpg.list_keys():
+            # TODO: Is it worth it to define pretty_bad_protocol._parsers.ImpoortOwnerTrust to validate
+            #       the return value? ... or should we rely solely on trust_level below?
+            _import_owner_trust(gpg, "{0}:6:\n".format(key["fingerprint"]))
+
         for key in gpg.list_keys():
             LOGGER.debug(
                 "%s   %s%s/%s",
                 key["type"],
                 "rsa" if int(key["algo"]) < 4 else "???",
                 key["length"],
-                key["keyid"],
+                key["fingerprint"],
             )
             for uid in key["uids"]:
                 LOGGER.debug("uid      %s", uid)
@@ -392,32 +415,53 @@ async def _verify_release_metadata(
                 response = await client_session.get(headers=headers, url=url)
                 if response.status > 400:
                     break
-                LOGGER.debug("Found signature.")
+                LOGGER.debug("Signature retrieved.")
                 signature = await response.read()
 
-                # Note: gnupg.py:verify_file() forces sig_file to be on disk, as the
-                #       underlying gpg utility does the same =(
+                # pkg/verify/verify.go:305: - verifySignatureWithKeyring()
                 LOGGER.debug("Verifying signature against digest: %s", digest)
-                with NamedTemporaryFile() as tmpfile:
-                    tmpfile.write(signature)
-                    tmpfile.flush()
-                    os.fsync(tmpfile.fileno())
+                crypt = gpg.decrypt(signature)
+                if not crypt.valid or crypt.trust_level < Verify.TRUST_ULTIMATE:
+                    LOGGER.error("Signature does not match!")
+                    continue
 
-                    result_local = gpg.verify_file(io.BytesIO(digest.sha256.encode("utf-8")), tmpfile.name)
-                    if result_local.valid:
-                        LOGGER.debug("1111 Signature matches.")
-                        result = True
-                        signatures.append(signature)
-                    else:
-                        LOGGER.debug("1111 SIGNATURE DOES NOT MATCH")
+                LOGGER.debug("Signature matches:")
+                LOGGER.debug("  key       : %s", crypt.pubkey_fingerprint)
+                timestamp = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                )
+                LOGGER.debug("  timestamp : %s", timestamp)
+                LOGGER.debug("  username  : %s", crypt.username)
 
-                    result_local = gpg.verify_file(io.BytesIO(digest.encode("utf-8")), tmpfile.name)
-                    if result_local.valid:
-                        LOGGER.debug("2222 Signature matches.")
-                        result = True
-                        signatures.append(signature)
-                    else:
-                        LOGGER.debug("2222 SIGNATURE DOES NOT MATCH")
+                # pkg/verify/verify.go:382: - verifyAtomicContainerSignature()
+                atomic_signature = AtomicSignature(crypt.data)
+                if atomic_signature.get_type() != AtomicSignature.TYPE:
+                    LOGGER.error("Signature is not the correct type!")
+                    continue
+
+                if len(atomic_signature.get_docker_reference().image) < 1:
+                    LOGGER.error("Signature must have an identity!")
+                    continue
+
+                if atomic_signature.get_docker_manifest_digest() != digest:
+                    LOGGER.error("Signature digest does not match!")
+                    continue
+
+                LOGGER.debug("Signature is compliant:")
+                LOGGER.debug(
+                    "  type                   : %s", atomic_signature.get_type()
+                )
+                LOGGER.debug(
+                    "  docker reference       : %s",
+                    atomic_signature.get_docker_reference(),
+                )
+                LOGGER.debug(
+                    "  docker manifest digest : %s",
+                    atomic_signature.get_docker_manifest_digest(),
+                )
+
+                result = True
+                signatures.append(signature)
 
     return {"result": result, "signatures": signatures}
 
@@ -435,7 +479,7 @@ async def get_release_metadata(
     Returns:
         dict:
             blobs: A mapping of blob digests to a set of image prefixes.
-            manifests: A mapping of image manfiests to tag values.
+            manifests: A mapping of image manifests to tag values.
             signature_stores: A list of signature store uris.
             signing_keys: A list of armored GnuPG trust stores.
     """
@@ -493,11 +537,11 @@ async def get_release_metadata(
     )
 
     # pkg/cli/admin/release/mirror.go:517 - imageVerifier.Verify()
-    # response = await _verify_release_metadata(
-    #     registry_v2_image_source, manifest_digest, locations, keys
-    # )
-    # if not response["result"]:
-    #     raise RuntimeError("Release verification failed!")
+    response = await _verify_release_metadata(
+        registry_v2_image_source, manifest_digest, locations, keys
+    )
+    if not response["result"]:
+        raise RuntimeError("Release verification failed!")
 
     assert image_references.get_json().get("kind", "") == "ImageStream"
     assert image_references.get_json().get("apiVersion", "") == "image.openshift.io/v1"

@@ -35,12 +35,11 @@ setup(
     extras_require={
         "dev": [
             "black",
-            "docker-compose",
-            "lovely-pytest-docker",
             "pylint",
             "pyopenssl",
             "pytest",
             "pytest-asyncio",
+            "pytest-docker-registry-fixtures",
             "twine",
             "wheel",
         ]
@@ -48,10 +47,10 @@ setup(
     include_package_data=True,
     install_requires=[
         "aiofiles",
-        "docker-registry-client-async>=0.1.6",
-        "docker-sign-verify>=1.0.0",
         "click",
-        "gnupg",
+        "docker-registry-client-async>=0.1.6",
+        "docker-sign-verify>=1.1.2",
+        "pretty-bad-protocol>=3.1.1",
     ],
     keywords="integrity mirror oc oc-mirror openshift sign signatures verify",
     license="GNU General Public LIcense v3.0",
@@ -59,10 +58,7 @@ setup(
     long_description_content_type="text/markdown",
     name="oc_mirror",
     packages=find_packages(),
-    setup_requires=["pytest-runner"],
     tests_require=[
-        "docker-compose",
-        "lovely-pytest-docker",
         "pyopenssl",
         "pytest",
         "pytest-asyncio",

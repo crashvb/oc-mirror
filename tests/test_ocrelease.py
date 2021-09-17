@@ -3,6 +3,7 @@
 # pylint: disable=redefined-outer-name
 
 """Manifest tests."""
+import os
 
 import certifi
 import logging
@@ -20,8 +21,14 @@ pytestmark = [pytest.mark.asyncio]
 LOGGER = logging.getLogger(__name__)
 
 
+# TODO: What is the best way to code `DRCA_DEBUG=1 DRCA_CREDENTIALS_STORE=~/.docker/quay.io-pull-secret.json` into
+#       this fixture?
+
+
 @pytest.fixture
-async def registry_v2_image_source(docker_registry_secure: DockerRegistrySecure) -> RegistryV2ImageSource:
+async def registry_v2_image_source(
+    docker_registry_secure: DockerRegistrySecure,
+) -> RegistryV2ImageSource:
     """Provides a RegistryV2ImageSource instance."""
     # Do not use caching; get a new instance for each test
     ssl_context = docker_registry_secure.ssl_context
@@ -43,7 +50,9 @@ async def registry_v2_image_source(docker_registry_secure: DockerRegistrySecure)
         # "s27lxlap.server27.info:5002/ocp4/openshift4:4.4.6-x86_64",
     ],
 )
-async def test_get_release_metadata(registry_v2_image_source: RegistryV2ImageSource, release: str):
+async def test_get_release_metadata(
+    registry_v2_image_source: RegistryV2ImageSource, release: str
+):
     """Tests release metadata retrieval from a remote registry."""
 
     logging.getLogger("gnupg").setLevel(logging.FATAL)
@@ -77,9 +86,13 @@ async def test_put_release(
     image_name_src = ImageName.parse(release)
     image_name_dest = image_name_src.clone()
     image_name_dest.endpoint = docker_registry_secure.endpoint
-    release_metadata = await get_release_metadata(registry_v2_image_source, image_name_src)
+    release_metadata = await get_release_metadata(
+        registry_v2_image_source, image_name_src
+    )
 
-    result = await put_release(registry_v2_image_source, image_name_dest, release_metadata)
+    result = await put_release(
+        registry_v2_image_source, image_name_dest, release_metadata
+    )
     assert result
 
 

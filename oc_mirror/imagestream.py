@@ -23,11 +23,10 @@ class ImageStream(JsonBytes):
 
     def get_name(self) -> str:
         """
-        Retrieves the unique name within a namespace
+        Retrieves the unique name within a namespace.
 
         Returns:
             The unique name within a namespace
-            The name of the image stream.
         """
         return self.get_json()["metadata"]["name"]
 
