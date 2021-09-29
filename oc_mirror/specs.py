@@ -6,6 +6,10 @@
 
 
 class OpenShiftReleaseSpecs:
+    """
+    OpenShift string literals.
+    """
+
     IMAGE_REFERENCES_NAME = "image-references"
     MANIFEST_PATH_PREFIX = "release-manifests/"
     RELEASE_ANNOTATION_CONFIG_MAP_VERIFIER = (

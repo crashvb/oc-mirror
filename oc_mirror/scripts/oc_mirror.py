@@ -12,12 +12,6 @@ import click
 
 from click.core import Context
 from docker_registry_client_async import ImageName
-from docker_sign_verify import (
-    ArchiveImageSource,
-    DeviceMapperRepositoryImageSource,
-    ImageSource,
-    RegistryV2ImageSource,
-)
 
 from .utils import (
     async_command,
