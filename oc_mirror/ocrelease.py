@@ -5,30 +5,33 @@
 """OpenShift release helpers."""
 
 import gzip
-import io
 import logging
-import os
+import re
 import tarfile
+import time
 
-from gnupg import GPG
 from io import BytesIO
 from json import loads
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any, cast, Dict, List, Optional, Set, Tuple, TypedDict
+from tempfile import TemporaryDirectory
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 from yaml import load_all, SafeLoader
 
 import pytest
 
 from aiohttp.typedefs import LooseHeaders
+from aiotempfile.aiotempfile import open as aiotempfile
 from docker_registry_client_async import (
     FormattedSHA256,
     ImageName,
 )
 from docker_sign_verify import ImageConfig, RegistryV2Manifest, RegistryV2ImageSource
-from docker_sign_verify.aiotempfile import open as aiotempfile
 from docker_sign_verify.utils import be_kind_rewind, chunk_file
+from pretty_bad_protocol import GPG
+from pretty_bad_protocol._parsers import Verify
+from pretty_bad_protocol._util import _make_binary_stream
 
+from .atomicsignature import AtomicSignature
 from .imagestream import ImageStream
 from .singleassignment import SingleAssignment
 from .specs import OpenShiftReleaseSpecs
@@ -50,35 +53,59 @@ async def read_from_tar(tar_file, tarinfo: tarfile.TarInfo) -> bytes:
     return bytesio.getvalue()
 
 
-class TypingCollectDigests(TypedDict):
+class TypingDetachedSignature(NamedTuple):
+    # pylint: disable=missing-class-docstring
+    atomic_signature: AtomicSignature
+    key: str
+    raw_signature: bytes
+    timestamp: str
+    verify: Verify
+    url: str
+    username: str
+
+
+class TypingRegexSubstitution(NamedTuple):
+    # pylint: disable=missing-class-docstring
+    pattern: str
+    replacement: str
+
+
+class TypingCollectDigests(NamedTuple):
+    # pylint: disable=missing-class-docstring
     blobs: Dict[FormattedSHA256, Set[str]]
     manifests: Dict[ImageName, str]
 
 
-class TypingGetReleaseMetadata(TypingCollectDigests):
+class TypingGetReleaseMetadata(NamedTuple):
+    # pylint: disable=missing-class-docstring
+    blobs: Dict[FormattedSHA256, Set[str]]
+    manifest_digest: FormattedSHA256
+    manifests: Dict[ImageName, str]
+    raw_image_references: ImageStream
+    raw_release_metadata: Any
     signature_stores: List[str]
+    signatures: List[TypingDetachedSignature]
     signing_keys: List[str]
 
 
-class TypingGetSecurityInformation(TypedDict):
+class TypingGetSecurityInformation(NamedTuple):
+    # pylint: disable=missing-class-docstring
     keys: List[str]
     locations: List[str]
 
 
-class TypingPutRelease(TypedDict):
-    pass
-
-
-class TypingSearchLayer(TypedDict):
+class TypingSearchLayer(NamedTuple):
+    # pylint: disable=missing-class-docstring
     image_references: ImageStream
     keys: List[str]
     locations: List[str]
     release_metadata: Any
 
 
-class TypingVerifyReleaseMetadata(TypedDict):
+class TypingVerifyReleaseMetadata(NamedTuple):
+    # pylint: disable=missing-class-docstring
     result: bool
-    signatures: List[bytes]
+    signatures: List[TypingDetachedSignature]
 
 
 async def _collect_digests(
@@ -115,7 +142,7 @@ async def _collect_digests(
             response = await registry_v2_image_source.docker_registry_client_async.head_manifest(
                 image_name
             )
-            LOGGER.info(
+            LOGGER.debug(
                 "Resolved source image %s to %s", image_name, response["digest"]
             )
             digest = response["digest"]
@@ -132,7 +159,65 @@ async def _collect_digests(
         image_name.tag = ""
         manifests[image_name] = name
 
-    return {"blobs": blobs, "manifests": manifests}
+    return TypingCollectDigests(blobs=blobs, manifests=manifests)
+
+
+async def _copy_blob(
+    registry_v2_image_source: RegistryV2ImageSource,
+    image_name_src: ImageName,
+    image_name_dest: ImageName,
+    digest: FormattedSHA256,
+):
+    LOGGER.debug("Copying blob %s ...", digest)
+    if await registry_v2_image_source.layer_exists(image_name_dest, digest):
+        # LOGGER.debug("    skipping ...")
+        return
+
+    async with aiotempfile(mode="w+b") as file:
+        await registry_v2_image_source.get_image_layer_to_disk(
+            image_name_src, digest, file
+        )
+        await be_kind_rewind(file)
+        response = await registry_v2_image_source.put_image_layer_from_disk(
+            image_name_dest, file
+        )
+        assert response["digest"] == digest
+
+
+async def _copy_manifest(
+    registry_v2_image_source: RegistryV2ImageSource,
+    image_name_src: ImageName,
+    image_name_dest: ImageName,
+):
+    LOGGER.debug("Copying manifest to: %s ...", image_name_dest)
+    LOGGER.debug("    from : %s", image_name_src)
+
+    response = (
+        await registry_v2_image_source.docker_registry_client_async.head_manifest(
+            image_name_dest
+        )
+    )
+    if response["result"]:
+        # LOGGER.debug("    skipping ...")
+        return
+
+    # TODO: How do we handle manifest lists?
+    async with aiotempfile(mode="w+b") as file:
+        await registry_v2_image_source.docker_registry_client_async.get_manifest_to_disk(
+            image_name_src, file
+        )
+        await be_kind_rewind(file)
+
+        # Note: ClientResponse.content.iter_chunks() will deplete the underlying stream without saving
+        #       ClientResponse._body; so calls to ClientReponse.read() will return None.
+        # manifest = RegistryV2Manifest(await response["client_response"].read())
+        manifest = RegistryV2Manifest(await file.read())
+        await be_kind_rewind(file)
+
+        response = await registry_v2_image_source.docker_registry_client_async.put_manifest_from_disk(
+            image_name_dest, file, media_type=manifest.get_media_type()
+        )
+        assert response["digest"] == image_name_src.digest
 
 
 async def _get_image_references(
@@ -239,6 +324,7 @@ async def _get_security_information(
                 not in document.get("metadata", []).get("annotations", [])
             ):
                 continue
+            LOGGER.debug("Found release security information: %s", path)
             for key, value in document.get("data", {}).items():
                 if key.startswith("verifier-public-key-"):
                     # LOGGER.debug("Found in %s:\n%s %s", path.name, key, value)
@@ -246,7 +332,7 @@ async def _get_security_information(
                 if key.startswith("store-"):
                     # LOGGER.debug("Found in %s:\n%s\n%s", path.name, key, value)
                     locations.append(value)
-    return {"keys": keys, "locations": locations}
+    return TypingGetSecurityInformation(keys=keys, locations=locations)
 
 
 def _get_tag_mapping(
@@ -263,12 +349,28 @@ def _get_tag_mapping(
     """
     # Special Case: for the outer release image
     # pkg/cli/admin/release/mirror.go:565 (o.ToRelease mapping)
-    yield release_image_name, release_image_name.tag
+    yield release_image_name.clone(), release_image_name.tag
 
     for name, image_name in image_references.get_tags():
         assert not image_name.tag and image_name.digest
         # LOGGER.debug("Mapping %s -> %s", image_name, name)
         yield image_name, name
+
+
+def _import_owner_trust(gpg: GPG, trust_data: str):
+    # pylint: disable=protected-access
+    """
+    Imports trust information.
+
+    Args:
+        gpg: GPG object on which to operate.
+        trust_data: The trust data to be imported.
+    """
+    result = gpg._result_map["import"](gpg)
+    data = _make_binary_stream(trust_data, gpg._encoding)
+    gpg._handle_io(["--import-ownertrust"], data, result, binary=True)
+    data.close()
+    return result
 
 
 async def _search_layer(
@@ -322,14 +424,14 @@ async def _search_layer(
                     if tmp:
                         release_metadata.set(tmp)
                     tmp = await _get_security_information(tar_file_in, tarinfo, path)
-                    keys.extend(tmp["keys"])
-                    locations.extend(tmp["locations"])
-    return {
-        "image_references": image_references.get(),
-        "keys": keys,
-        "locations": locations,
-        "release_metadata": release_metadata.get(),
-    }
+                    keys.extend(tmp.keys)
+                    locations.extend(tmp.locations)
+    return TypingSearchLayer(
+        image_references=image_references.get(),
+        keys=keys,
+        locations=locations,
+        release_metadata=release_metadata.get(),
+    )
 
 
 async def _verify_release_metadata(
@@ -338,6 +440,7 @@ async def _verify_release_metadata(
     locations: List[str],
     keys: List[str],
 ) -> TypingVerifyReleaseMetadata:
+    # pylint: disable=protected-access,too-many-locals
     """
     Verifies that a matching signatures exists for given digest / key combination at a set of predefined
     locations.
@@ -353,6 +456,12 @@ async def _verify_release_metadata(
             result: Boolean result. True IFF a matching signature was found.
             signatures: List of matching signatures.
     """
+    LOGGER.debug(
+        "Verifying release authenticity:\nKeys      :\n  %s\nLocations :\n  %s",
+        f"{len(keys)} key(s)",
+        "\n  ".join(locations),
+    )
+
     result = False
     signatures = []
 
@@ -368,13 +477,19 @@ async def _verify_release_metadata(
         for key in keys:
             gpg.import_keys(key)
 
+        # Would be nice if this method was built-in ... =/
+        for key in gpg.list_keys():
+            # TODO: Is it worth it to define pretty_bad_protocol._parsers.ImpoortOwnerTrust to validate
+            #       the return value? ... or should we rely solely on crypt.trust_level below?
+            _import_owner_trust(gpg, f"{key['fingerprint']}:6:\n")
+
         for key in gpg.list_keys():
             LOGGER.debug(
                 "%s   %s%s/%s",
                 key["type"],
                 "rsa" if int(key["algo"]) < 4 else "???",
                 key["length"],
-                key["keyid"],
+                key["fingerprint"],
             )
             for uid in key["uids"]:
                 LOGGER.debug("uid      %s", uid)
@@ -392,38 +507,76 @@ async def _verify_release_metadata(
                 response = await client_session.get(headers=headers, url=url)
                 if response.status > 400:
                     break
-                LOGGER.debug("Found signature.")
+                LOGGER.debug("Signature retrieved.")
                 signature = await response.read()
 
-                # Note: gnupg.py:verify_file() forces sig_file to be on disk, as the
-                #       underlying gpg utility does the same =(
+                # pkg/verify/verify.go:305: - verifySignatureWithKeyring()
                 LOGGER.debug("Verifying signature against digest: %s", digest)
-                with NamedTemporaryFile() as tmpfile:
-                    tmpfile.write(signature)
-                    tmpfile.flush()
-                    os.fsync(tmpfile.fileno())
+                crypt = gpg.decrypt(signature)
+                if not crypt.valid or crypt.trust_level < Verify.TRUST_ULTIMATE:
+                    LOGGER.error("Signature does not match!")
+                    continue
 
-                    result_local = gpg.verify_file(io.BytesIO(digest.sha256.encode("utf-8")), tmpfile.name)
-                    if result_local.valid:
-                        LOGGER.debug("1111 Signature matches.")
-                        result = True
-                        signatures.append(signature)
-                    else:
-                        LOGGER.debug("1111 SIGNATURE DOES NOT MATCH")
+                LOGGER.debug("Signature matches:")
+                LOGGER.debug("  key       : %s", crypt.pubkey_fingerprint)
+                timestamp = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                )
+                LOGGER.debug("  timestamp : %s", timestamp)
+                LOGGER.debug("  username  : %s", crypt.username)
 
-                    result_local = gpg.verify_file(io.BytesIO(digest.encode("utf-8")), tmpfile.name)
-                    if result_local.valid:
-                        LOGGER.debug("2222 Signature matches.")
-                        result = True
-                        signatures.append(signature)
-                    else:
-                        LOGGER.debug("2222 SIGNATURE DOES NOT MATCH")
+                # pkg/verify/verify.go:382: - verifyAtomicContainerSignature()
+                atomic_signature = AtomicSignature(crypt.data)
+                if atomic_signature.get_type() != AtomicSignature.TYPE:
+                    LOGGER.error("Signature is not the correct type!")
+                    continue
 
-    return {"result": result, "signatures": signatures}
+                if len(atomic_signature.get_docker_reference().image) < 1:
+                    LOGGER.error("Signature must have an identity!")
+                    continue
+
+                if atomic_signature.get_docker_manifest_digest() != digest:
+                    LOGGER.error("Signature digest does not match!")
+                    continue
+
+                LOGGER.debug("Signature is compliant:")
+                LOGGER.debug(
+                    "  type                   : %s", atomic_signature.get_type()
+                )
+                LOGGER.debug(
+                    "  docker reference       : %s",
+                    atomic_signature.get_docker_reference(),
+                )
+                LOGGER.debug(
+                    "  docker manifest digest : %s",
+                    atomic_signature.get_docker_manifest_digest(),
+                )
+
+                result = True
+                signatures.append(
+                    TypingDetachedSignature(
+                        atomic_signature=atomic_signature,
+                        key=crypt.pubkey_fingerprint,
+                        raw_signature=signature,
+                        timestamp=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                        ),
+                        verify=crypt,
+                        url=url,
+                        username=crypt.username,
+                    )
+                )
+
+    return TypingVerifyReleaseMetadata(result=result, signatures=signatures)
 
 
 async def get_release_metadata(
-    registry_v2_image_source: RegistryV2ImageSource, release_image_name: ImageName
+    *,
+    registry_v2_image_source: RegistryV2ImageSource,
+    release_image_name: ImageName,
+    signature_stores: List[str] = None,
+    signing_keys: List[str] = None,
+    verify: bool = True,
 ) -> TypingGetReleaseMetadata:
     """
     Retrieves all metadata for a given OpenShift release image.
@@ -431,11 +584,14 @@ async def get_release_metadata(
     Args:
         registry_v2_image_source: The Registry V2 image source to use to connect.
         release_image_name: The OpenShift release image for which to retrieve the metadata.
+        signature_stores: A list of signature store uri overrides.
+        signing_keys: A list of armored GnuPG trust store overrides.
+        verify: If True, the atomic signature will be retrieved and validated.
 
     Returns:
         dict:
             blobs: A mapping of blob digests to a set of image prefixes.
-            manifests: A mapping of image manfiests to tag values.
+            manifests: A mapping of image manifests to tag values.
             signature_stores: A list of signature store uris.
             signing_keys: A list of armored GnuPG trust stores.
     """
@@ -472,12 +628,12 @@ async def get_release_metadata(
         tmp = await _search_layer(
             registry_v2_image_source, release_image_name, FormattedSHA256.parse(layer)
         )
-        if tmp["image_references"]:
-            image_references.set(tmp["image_references"])
-        keys.extend(tmp["keys"])
-        locations.extend(tmp["locations"])
-        if tmp["release_metadata"]:
-            release_metadata.set(tmp["release_metadata"])
+        if tmp.image_references:
+            image_references.set(tmp.image_references)
+        keys.extend(tmp.keys)
+        locations.extend(tmp.locations)
+        if tmp.release_metadata:
+            release_metadata.set(tmp.release_metadata)
     image_references = image_references.get()
     release_metadata = release_metadata.get()
 
@@ -486,18 +642,23 @@ async def get_release_metadata(
     assert locations
     assert release_metadata
 
-    LOGGER.debug(
-        "Verifying source release authenticity:\nKeys      :\n  %s\nLocations :\n  %s",
-        f"{len(keys)} key(s)",
-        "\n  ".join(locations),
-    )
-
     # pkg/cli/admin/release/mirror.go:517 - imageVerifier.Verify()
-    # response = await _verify_release_metadata(
-    #     registry_v2_image_source, manifest_digest, locations, keys
-    # )
-    # if not response["result"]:
-    #     raise RuntimeError("Release verification failed!")
+    signatures = []
+    if verify:
+        _keys = keys
+        if signing_keys:
+            _keys = signing_keys
+        _locations = locations
+        if signature_stores:
+            _locations = signature_stores
+        response = await _verify_release_metadata(
+            registry_v2_image_source, manifest_digest, _locations, _keys
+        )
+        if not response.result:
+            raise RuntimeError("Release verification failed!")
+        signatures = response.signatures
+    else:
+        LOGGER.debug("Skipping source release authenticity verification!")
 
     assert image_references.get_json().get("kind", "") == "ImageStream"
     assert image_references.get_json().get("apiVersion", "") == "image.openshift.io/v1"
@@ -507,91 +668,99 @@ async def get_release_metadata(
     )
     LOGGER.debug(
         "Collected %d manifests with %d blobs.",
-        len(tmp["manifests"]),
-        len(tmp["blobs"]),
+        len(tmp.manifests),
+        len(tmp.blobs),
     )
-    result = cast(TypingGetReleaseMetadata, tmp)
-    result["signature_stores"] = locations
-    result["signing_keys"] = keys
+    result = TypingGetReleaseMetadata(
+        blobs=tmp.blobs,
+        manifest_digest=manifest_digest,
+        manifests=tmp.manifests,
+        raw_image_references=image_references,
+        raw_release_metadata=release_metadata,
+        signature_stores=locations,
+        signatures=signatures,
+        signing_keys=keys,
+    )
 
     # pkg/cli/image/mirror/plan.go:244 - Print()
     # LOGGER.debug(release_image_name)
     # LOGGER.debug("  blobs:")
-    # for digest, image_prefixes in tmp["blobs"].items():
+    # for digest, image_prefixes in result.blobs.items():
     #     for image_prefix in image_prefixes:
     #         LOGGER.debug("    %s %s", image_prefix, digest)
     # LOGGER.debug("  manifests:")
-    # for image_name in tmp["manifests"].keys():
-    #     LOGGER.debug("    %s -> %s", image_name, tmp["manifests"][image_name])
+    # for image_name in result.manifests.keys():
+    #     LOGGER.debug("    %s -> %s", image_name, result.manifests[image_name])
 
     return result
 
 
-async def _copy_blob(
-    registry_v2_image_source: RegistryV2ImageSource,
-    image_name_src: ImageName,
-    image_name_dest: ImageName,
-    digest: FormattedSHA256,
+async def log_release_metadata(
+    *,
+    release_image_name: ImageName,
+    release_metadata: TypingGetReleaseMetadata,
+    sort_metadata: bool = False,
 ):
-    LOGGER.debug("Copying blob %s ...", digest)
-    # LOGGER.debug("    from : %s", image_name_src)
-    # LOGGER.debug("    to   : %s", image_name_dest)
-    if await registry_v2_image_source.layer_exists(image_name_dest, digest):
-        LOGGER.debug("    skipping ...")
-        return
+    """
+    Appends metadata for a given release to the log
 
-    async with aiotempfile(mode="w+b") as file:
-        await registry_v2_image_source.get_image_layer_to_disk(
-            image_name_src, digest, file
+    Args:
+        release_image_name: The OpenShift release image for which to retrieve the metadata.
+        release_metadata: The metadata for the release to be logged.
+        sort_metadata: If True, the metadata keys will be sorted.
+    """
+
+    def make_image_name(img_name: ImageName, tag: str):
+        result = img_name.clone()
+        result.tag = tag
+        return result
+
+    LOGGER.info(release_image_name)
+    LOGGER.info("  manifests:")
+    manifests = [
+        make_image_name(image_name, tag)
+        for image_name, tag in release_metadata.manifests.items()
+    ]
+    if sort_metadata:
+        manifests = sorted(manifests)
+    for manifest in manifests:
+        LOGGER.info("    %s", manifest)
+    LOGGER.info("  blobs:")
+    blobs = [
+        ImageName.parse(f"{image_prefix}@{digest}")
+        for digest, image_prefixes in release_metadata.blobs.items()
+        for image_prefix in image_prefixes
+    ]
+    if sort_metadata:
+        blobs = sorted(blobs)
+    for blob in blobs:
+        LOGGER.info("    %s", blob)
+    LOGGER.info("  signatures:")
+    signatures = release_metadata.signatures
+    if sort_metadata:
+        signatures = sorted(signatures, key=lambda item: item.timestamp, reverse=True)
+    for signature in signatures:
+        LOGGER.info(
+            "    release name    : %s",
+            signature.atomic_signature.get_docker_reference(),
         )
-        await be_kind_rewind(file)
-        response = await registry_v2_image_source.put_image_layer_from_disk(
-            image_name_dest, file
+        LOGGER.info(
+            "    manifest digest : %s",
+            signature.atomic_signature.get_docker_manifest_digest(),
         )
-        assert response["digest"] == digest
-
-
-async def _copy_manifest(
-    registry_v2_image_source: RegistryV2ImageSource,
-    image_name_src: ImageName,
-    image_name_dest: ImageName,
-):
-    LOGGER.debug("Copying manifest to: %s ...", image_name_dest)
-    # LOGGER.debug("    from : %s", image_name_src)
-
-    response = (
-        await registry_v2_image_source.docker_registry_client_async.head_manifest(
-            image_name_dest
-        )
-    )
-    if response["result"]:
-        LOGGER.debug("    skipping ...")
-        return
-
-    # TODO: How do we handle manifest lists?
-    async with aiotempfile(mode="w+b") as file:
-        await registry_v2_image_source.docker_registry_client_async.get_manifest_to_disk(
-            image_name_src, file
-        )
-        await be_kind_rewind(file)
-
-        # Note: ClientResponse.content.iter_chunks() will deplete the underlying stream without saving
-        #       ClientResponse._body; so calls to ClientReponse.read() will return None.
-        # manifest = RegistryV2Manifest(await response["client_response"].read())
-        manifest = RegistryV2Manifest(await file.read())
-        await be_kind_rewind(file)
-
-        response = await registry_v2_image_source.docker_registry_client_async.put_manifest_from_disk(
-            image_name_dest, file, media_type=manifest.get_media_type()
-        )
-        assert response["digest"] == image_name_src.digest
+        LOGGER.info("    key             : %s", signature.key)
+        LOGGER.info("    username        : %s", signature.username)
+        LOGGER.info("    timestamp       : %s", signature.timestamp)
+        LOGGER.info("")
 
 
 async def put_release(
-    registry_v2_image_source: RegistryV2ImageSource,
+    *,
     mirror_image_name: ImageName,
+    registry_v2_image_source: RegistryV2ImageSource,
     release_metadata: TypingGetReleaseMetadata,
-) -> TypingPutRelease:
+    verify: bool = True,
+):
     """
     Mirrors an openshift release.
 
@@ -599,34 +768,107 @@ async def put_release(
         mirror_image_name: The OpenShift release image to which to store the metadata.
         registry_v2_image_source: The Registry V2 image source to use to connect.
         release_metadata: The metadata for the release to be mirrored.
+        verify: If True, the atomic signature will be retrieved and validated.
     """
     LOGGER.debug("Destination release image name: %s", mirror_image_name)
 
     LOGGER.debug(
         "Replicating %d manifests with %d blobs.",
-        len(release_metadata["manifests"]),
-        len(release_metadata["blobs"]),
+        len(release_metadata.manifests),
+        len(release_metadata.blobs),
     )
 
-    # TODO: Regenerate the manifest, signing key, and signature store location ...
-
-    for digest, image_prefixes in release_metadata["blobs"].items():
-        # TODO: Handle blob mounting ...
-        image_name_src = ImageName.parse(list(image_prefixes)[0])
-        image_name_dest = image_name_src.clone()
-        # Note: Only update the endpoint; keep the digest and image the same
-        image_name_dest.endpoint = mirror_image_name.endpoint
-        await _copy_blob(
-            registry_v2_image_source, image_name_src, image_name_dest, digest
+    if verify:
+        response = await _verify_release_metadata(
+            registry_v2_image_source,
+            release_metadata.manifest_digest,
+            release_metadata.signature_stores,
+            release_metadata.signing_keys,
         )
+        if not response.result:
+            raise RuntimeError("Release verification failed!")
+    else:
+        LOGGER.debug("Skipping source release authenticity verification!")
 
-    for image_name_src in release_metadata["manifests"].keys():
+    # Replicate all blobs ...
+    last_image_name_dest = None
+    last_image_name_src = None
+    for digest, image_prefixes in release_metadata.blobs.items():
+        # TODO: Handle blob mounting ...
+        for image_prefix in image_prefixes:
+            image_name_src = ImageName.parse(image_prefix)
+            image_name_dest = image_name_src.clone()
+            # Note: Only update the endpoint; keep the digest and image the same
+            image_name_dest.endpoint = mirror_image_name.endpoint
+
+            if (
+                last_image_name_dest != image_name_dest
+                or last_image_name_src != image_name_src
+            ):
+                LOGGER.debug("Copy blobs ...")
+                LOGGER.debug("    from : %s", image_name_src)
+                LOGGER.debug("    to   : %s", image_name_dest)
+            await _copy_blob(
+                registry_v2_image_source, image_name_src, image_name_dest, digest
+            )
+            last_image_name_dest = image_name_dest
+            last_image_name_src = image_name_src
+
+    # Replicate all manifests ...
+    for image_name_src in release_metadata.manifests.keys():
         # Note: Update the endpoint; keep the image unchanged; use the derived tag; do not use digest
         image_name_dest = ImageName(
             image_name_src.image,
             endpoint=mirror_image_name.endpoint,
-            tag=release_metadata["manifests"][image_name_src],
+            tag=release_metadata.manifests[image_name_src],
         )
         await _copy_manifest(registry_v2_image_source, image_name_src, image_name_dest)
 
-    return {"TODO": "TODO"}
+
+async def translate_release_metadata(
+    *,
+    regex_substitutions: List[TypingRegexSubstitution],
+    release_metadata: TypingGetReleaseMetadata,
+    signature_stores: List[str] = None,
+    signing_keys: List[str] = None,
+) -> TypingGetReleaseMetadata:
+    """
+    Translates metadata for a given release to support hop 2-n mirroring.
+
+    Args:
+        regex_substitutions: Regular expression substitutions to be applied to source uris.
+        release_metadata: The metadata for the release to be translated.
+        signature_stores: A list of signature store uri overrides.
+        signing_keys: A list of armored GnuPG trust store overrides.
+
+    Returns:
+        The translated metadata for a given release.
+    """
+    if signature_stores is None:
+        signature_stores = release_metadata.signature_stores
+    if signing_keys is None:
+        signing_keys = release_metadata.signing_keys
+
+    blobs = None
+    manifests = None
+    for regex_substitution in regex_substitutions:
+        pattern = re.compile(regex_substitution.pattern)
+        blobs = {
+            k: {pattern.sub(regex_substitution.replacement, x) for x in v}
+            for (k, v) in release_metadata.blobs.items()
+        }
+        manifests = {
+            ImageName.parse(pattern.sub(regex_substitution.replacement, str(k))): v
+            for (k, v) in release_metadata.manifests.items()
+        }
+
+    return TypingGetReleaseMetadata(
+        blobs=blobs,
+        manifest_digest=release_metadata.manifest_digest,
+        manifests=manifests,
+        raw_image_references=release_metadata.raw_image_references,
+        raw_release_metadata=release_metadata.raw_release_metadata,
+        signatures=release_metadata.signatures,
+        signature_stores=signature_stores,
+        signing_keys=signing_keys,
+    )
