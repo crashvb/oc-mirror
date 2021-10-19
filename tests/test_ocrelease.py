@@ -36,6 +36,7 @@ LOGGER = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def pdrf_scale_factor() -> int:
+    """Scale PDRF to 2."""
     return 2
 
 
@@ -95,13 +96,14 @@ def _equal_if_unqualified(image_name0: ImageName, image_name1: ImageName) -> boo
 
 @pytest.mark.online
 @pytest.mark.parametrize(
-    "release,count_blobs,count_manifests,count_signature_stores,count_signing_keys,known_good_blobs,"
+    "release,count_blobs,count_manifests,count_signatures,count_signature_stores,count_signing_keys,known_good_blobs,"
     "known_good_manifests,manifest_digest",
     [
         (
             "quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64",
             227,
             109,
+            3,
             2,
             1,
             {
@@ -127,6 +129,7 @@ async def test_get_release_metadata(
     release: str,
     count_blobs: int,
     count_manifests: int,
+    count_signatures: int,
     count_signature_stores: int,
     count_signing_keys: int,
     known_good_blobs: Dict[FormattedSHA256, Set[str]],
@@ -162,11 +165,17 @@ async def test_get_release_metadata(
 
     assert result.raw_release_metadata
 
+    assert result.signatures
+    assert len(result.signatures) == count_signatures
+
     assert result.signature_stores
     assert len(result.signature_stores) == count_signature_stores
 
     assert result.signing_keys
     assert len(result.signing_keys) == count_signing_keys
+
+
+# TODO: async def test_log_release_metadata():
 
 
 @pytest.mark.online_modification
@@ -260,6 +269,8 @@ async def test_put_release_from_internet(
         == release_metadata_src.raw_release_metadata
     )
 
+    # TODO: Do we need to check signatures here?
+
     # The signature stores should be the same ...
     assert (
         release_metadata_dest.signature_stores.sort()
@@ -278,11 +289,11 @@ async def test_put_release_from_internet(
     "release", ["quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64"]
 )
 async def test_put_release_from_internal(
-    caplog: LogCaptureFixture,
     docker_registry_secure_list: List[DockerRegistrySecure],
     registry_v2_image_source_list: RegistryV2ImageSource,
     release: str,
 ):
+    # pylint: disable=too-many-locals
     """Tests release replication to a local registry."""
 
     logging.getLogger("gnupg").setLevel(logging.FATAL)
@@ -390,6 +401,8 @@ async def test_put_release_from_internal(
     assert (
         release_metadata2.raw_release_metadata == release_metadata0.raw_release_metadata
     )
+
+    # TODO: Do we need to check signatures here?
 
     # The signature stores should be the same ...
     assert (

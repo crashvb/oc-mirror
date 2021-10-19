@@ -10,7 +10,6 @@ import re
 import tarfile
 import time
 
-from copy import deepcopy
 from io import BytesIO
 from json import loads
 from pathlib import Path
@@ -54,7 +53,19 @@ async def read_from_tar(tar_file, tarinfo: tarfile.TarInfo) -> bytes:
     return bytesio.getvalue()
 
 
+class TypingDetachedSignature(NamedTuple):
+    # pylint: disable=missing-class-docstring
+    atomic_signature: AtomicSignature
+    key: str
+    raw_signature: bytes
+    timestamp: str
+    verify: Verify
+    url: str
+    username: str
+
+
 class TypingRegexSubstitution(NamedTuple):
+    # pylint: disable=missing-class-docstring
     pattern: str
     replacement: str
 
@@ -73,6 +84,7 @@ class TypingGetReleaseMetadata(NamedTuple):
     raw_image_references: ImageStream
     raw_release_metadata: Any
     signature_stores: List[str]
+    signatures: List[TypingDetachedSignature]
     signing_keys: List[str]
 
 
@@ -93,7 +105,7 @@ class TypingSearchLayer(NamedTuple):
 class TypingVerifyReleaseMetadata(NamedTuple):
     # pylint: disable=missing-class-docstring
     result: bool
-    signatures: List[bytes]
+    signatures: List[TypingDetachedSignature]
 
 
 async def _collect_digests(
@@ -130,7 +142,7 @@ async def _collect_digests(
             response = await registry_v2_image_source.docker_registry_client_async.head_manifest(
                 image_name
             )
-            LOGGER.info(
+            LOGGER.debug(
                 "Resolved source image %s to %s", image_name, response["digest"]
             )
             digest = response["digest"]
@@ -541,7 +553,19 @@ async def _verify_release_metadata(
                 )
 
                 result = True
-                signatures.append(signature)
+                signatures.append(
+                    TypingDetachedSignature(
+                        atomic_signature=atomic_signature,
+                        key=crypt.pubkey_fingerprint,
+                        raw_signature=signature,
+                        timestamp=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                        ),
+                        verify=crypt,
+                        url=url,
+                        username=crypt.username,
+                    )
+                )
 
     return TypingVerifyReleaseMetadata(result=result, signatures=signatures)
 
@@ -550,6 +574,8 @@ async def get_release_metadata(
     *,
     registry_v2_image_source: RegistryV2ImageSource,
     release_image_name: ImageName,
+    signature_stores: List[str] = None,
+    signing_keys: List[str] = None,
     verify: bool = True,
 ) -> TypingGetReleaseMetadata:
     """
@@ -558,6 +584,8 @@ async def get_release_metadata(
     Args:
         registry_v2_image_source: The Registry V2 image source to use to connect.
         release_image_name: The OpenShift release image for which to retrieve the metadata.
+        signature_stores: A list of signature store uri overrides.
+        signing_keys: A list of armored GnuPG trust store overrides.
         verify: If True, the atomic signature will be retrieved and validated.
 
     Returns:
@@ -615,12 +643,20 @@ async def get_release_metadata(
     assert release_metadata
 
     # pkg/cli/admin/release/mirror.go:517 - imageVerifier.Verify()
+    signatures = []
     if verify:
+        _keys = keys
+        if signing_keys:
+            _keys = signing_keys
+        _locations = locations
+        if signature_stores:
+            _locations = signature_stores
         response = await _verify_release_metadata(
-            registry_v2_image_source, manifest_digest, locations, keys
+            registry_v2_image_source, manifest_digest, _locations, _keys
         )
         if not response.result:
             raise RuntimeError("Release verification failed!")
+        signatures = response.signatures
     else:
         LOGGER.debug("Skipping source release authenticity verification!")
 
@@ -642,6 +678,7 @@ async def get_release_metadata(
         raw_image_references=image_references,
         raw_release_metadata=release_metadata,
         signature_stores=locations,
+        signatures=signatures,
         signing_keys=keys,
     )
 
@@ -656,6 +693,65 @@ async def get_release_metadata(
     #     LOGGER.debug("    %s -> %s", image_name, result.manifests[image_name])
 
     return result
+
+
+async def log_release_metadata(
+    *,
+    release_image_name: ImageName,
+    release_metadata: TypingGetReleaseMetadata,
+    sort_metadata: bool = False,
+):
+    """
+    Appends metadata for a given release to the log
+
+    Args:
+        release_image_name: The OpenShift release image for which to retrieve the metadata.
+        release_metadata: The metadata for the release to be logged.
+        sort_metadata: If True, the metadata keys will be sorted.
+    """
+
+    def make_image_name(img_name: ImageName, tag: str):
+        result = img_name.clone()
+        result.tag = tag
+        return result
+
+    LOGGER.info(release_image_name)
+    LOGGER.info("  manifests:")
+    manifests = [
+        make_image_name(image_name, tag)
+        for image_name, tag in release_metadata.manifests.items()
+    ]
+    if sort_metadata:
+        manifests = sorted(manifests)
+    for manifest in manifests:
+        LOGGER.info("    %s", manifest)
+    LOGGER.info("  blobs:")
+    blobs = [
+        ImageName.parse(f"{image_prefix}@{digest}")
+        for digest, image_prefixes in release_metadata.blobs.items()
+        for image_prefix in image_prefixes
+    ]
+    if sort_metadata:
+        blobs = sorted(blobs)
+    for blob in blobs:
+        LOGGER.info("    %s", blob)
+    LOGGER.info("  signatures:")
+    signatures = release_metadata.signatures
+    if sort_metadata:
+        signatures = sorted(signatures, key=lambda item: item.timestamp, reverse=True)
+    for signature in signatures:
+        LOGGER.info(
+            "    release name    : %s",
+            signature.atomic_signature.get_docker_reference(),
+        )
+        LOGGER.info(
+            "    manifest digest : %s",
+            signature.atomic_signature.get_docker_manifest_digest(),
+        )
+        LOGGER.info("    key             : %s", signature.key)
+        LOGGER.info("    username        : %s", signature.username)
+        LOGGER.info("    timestamp       : %s", signature.timestamp)
+        LOGGER.info("")
 
 
 async def put_release(
@@ -772,6 +868,7 @@ async def translate_release_metadata(
         manifests=manifests,
         raw_image_references=release_metadata.raw_image_references,
         raw_release_metadata=release_metadata.raw_release_metadata,
+        signatures=release_metadata.signatures,
         signature_stores=signature_stores,
         signing_keys=signing_keys,
     )

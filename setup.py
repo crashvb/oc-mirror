@@ -30,7 +30,7 @@ setup(
     description="A utility that can be used to mirror OpenShift releases between docker registries.",
     entry_points="""
         [console_scripts]
-        oc-mirror=oc_mirror.scripts.os_mirror:cli
+        oc-mirror=oc_mirror.scripts.oc_mirror:cli
     """,
     extras_require={
         "dev": [
