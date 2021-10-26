@@ -32,6 +32,7 @@ from pretty_bad_protocol._parsers import Verify
 from pretty_bad_protocol._util import _make_binary_stream
 
 from .atomicsignature import AtomicSignature
+from .exceptions import DigestMismatchError, NoSignatureError, SignatureMismatchError
 from .imagestream import ImageStream
 from .singleassignment import SingleAssignment
 from .specs import OpenShiftReleaseSpecs
@@ -102,9 +103,15 @@ class TypingSearchLayer(NamedTuple):
     release_metadata: Any
 
 
+class TypingVerifyDetachedSignature(NamedTuple):
+    # pylint: disable=missing-class-docstring
+    atomic_signature: AtomicSignature
+    crypt: Verify
+    result: bool
+
+
 class TypingVerifyReleaseMetadata(NamedTuple):
     # pylint: disable=missing-class-docstring
-    result: bool
     signatures: List[TypingDetachedSignature]
 
 
@@ -434,6 +441,62 @@ async def _search_layer(
     )
 
 
+async def _verify_detached_signature(
+    *, digest: FormattedSHA256, gpg: GPG, signature: bytes
+) -> TypingVerifyDetachedSignature:
+    """
+    Verifies a detached signature against a given digest.
+
+    Args:
+        digest: Digest of the registry manifest.
+        gpg: GnuPG object to use to decrypt the signature.
+        signature: The signature to be verified
+
+    Returns:
+        The associated metadata used for verification.
+    """
+
+    # pkg/verify/verify.go:305: - verifySignatureWithKeyring()
+    LOGGER.debug("Verifying signature against digest: %s", digest)
+    crypt = gpg.decrypt(signature)
+    if not crypt.valid or crypt.trust_level < Verify.TRUST_ULTIMATE:
+        raise SignatureMismatchError("Signature does not match!")
+
+    LOGGER.debug("Signature matches:")
+    LOGGER.debug("  key       : %s", crypt.pubkey_fingerprint)
+    timestamp = time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+    )
+    LOGGER.debug("  timestamp : %s", timestamp)
+    LOGGER.debug("  username  : %s", crypt.username)
+
+    # pkg/verify/verify.go:382: - verifyAtomicContainerSignature()
+    atomic_signature = AtomicSignature(crypt.data)
+    if atomic_signature.get_type() != AtomicSignature.TYPE:
+        raise SignatureMismatchError("Signature is not the correct type!")
+
+    if len(atomic_signature.get_docker_reference().image) < 1:
+        raise SignatureMismatchError("Signature must have an identity!")
+
+    if atomic_signature.get_docker_manifest_digest() != digest:
+        raise DigestMismatchError("Signature digest does not match!")
+
+    LOGGER.debug("Signature is compliant:")
+    LOGGER.debug("  type                   : %s", atomic_signature.get_type())
+    LOGGER.debug(
+        "  docker reference       : %s",
+        atomic_signature.get_docker_reference(),
+    )
+    LOGGER.debug(
+        "  docker manifest digest : %s",
+        atomic_signature.get_docker_manifest_digest(),
+    )
+
+    return TypingVerifyDetachedSignature(
+        atomic_signature=atomic_signature, crypt=crypt, result=True
+    )
+
+
 async def _verify_release_metadata(
     registry_v2_image_source: RegistryV2ImageSource,
     digest: FormattedSHA256,
@@ -510,64 +573,31 @@ async def _verify_release_metadata(
                 LOGGER.debug("Signature retrieved.")
                 signature = await response.read()
 
-                # pkg/verify/verify.go:305: - verifySignatureWithKeyring()
-                LOGGER.debug("Verifying signature against digest: %s", digest)
-                crypt = gpg.decrypt(signature)
-                if not crypt.valid or crypt.trust_level < Verify.TRUST_ULTIMATE:
-                    LOGGER.error("Signature does not match!")
-                    continue
-
-                LOGGER.debug("Signature matches:")
-                LOGGER.debug("  key       : %s", crypt.pubkey_fingerprint)
-                timestamp = time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                metadata = await _verify_detached_signature(
+                    digest=digest, gpg=gpg, signature=signature
                 )
-                LOGGER.debug("  timestamp : %s", timestamp)
-                LOGGER.debug("  username  : %s", crypt.username)
-
-                # pkg/verify/verify.go:382: - verifyAtomicContainerSignature()
-                atomic_signature = AtomicSignature(crypt.data)
-                if atomic_signature.get_type() != AtomicSignature.TYPE:
-                    LOGGER.error("Signature is not the correct type!")
+                if not metadata.result:
                     continue
-
-                if len(atomic_signature.get_docker_reference().image) < 1:
-                    LOGGER.error("Signature must have an identity!")
-                    continue
-
-                if atomic_signature.get_docker_manifest_digest() != digest:
-                    LOGGER.error("Signature digest does not match!")
-                    continue
-
-                LOGGER.debug("Signature is compliant:")
-                LOGGER.debug(
-                    "  type                   : %s", atomic_signature.get_type()
-                )
-                LOGGER.debug(
-                    "  docker reference       : %s",
-                    atomic_signature.get_docker_reference(),
-                )
-                LOGGER.debug(
-                    "  docker manifest digest : %s",
-                    atomic_signature.get_docker_manifest_digest(),
-                )
 
                 result = True
                 signatures.append(
                     TypingDetachedSignature(
-                        atomic_signature=atomic_signature,
-                        key=crypt.pubkey_fingerprint,
+                        atomic_signature=metadata.atomic_signature,
+                        key=metadata.crypt.pubkey_fingerprint,
                         raw_signature=signature,
                         timestamp=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.gmtime(float(crypt.sig_timestamp))
+                            "%Y-%m-%d %H:%M:%S",
+                            time.gmtime(float(metadata.crypt.sig_timestamp)),
                         ),
-                        verify=crypt,
+                        verify=metadata.crypt,
                         url=url,
-                        username=crypt.username,
+                        username=metadata.crypt.username,
                     )
                 )
 
-    return TypingVerifyReleaseMetadata(result=result, signatures=signatures)
+    if not result:
+        raise NoSignatureError("Unable to locate a valid signature!")
+    return TypingVerifyReleaseMetadata(signatures=signatures)
 
 
 async def get_release_metadata(
@@ -654,8 +684,6 @@ async def get_release_metadata(
         response = await _verify_release_metadata(
             registry_v2_image_source, manifest_digest, _locations, _keys
         )
-        if not response.result:
-            raise RuntimeError("Release verification failed!")
         signatures = response.signatures
     else:
         LOGGER.debug("Skipping source release authenticity verification!")
@@ -779,14 +807,12 @@ async def put_release(
     )
 
     if verify:
-        response = await _verify_release_metadata(
+        await _verify_release_metadata(
             registry_v2_image_source,
             release_metadata.manifest_digest,
             release_metadata.signature_stores,
             release_metadata.signing_keys,
         )
-        if not response.result:
-            raise RuntimeError("Release verification failed!")
     else:
         LOGGER.debug("Skipping source release authenticity verification!")
 

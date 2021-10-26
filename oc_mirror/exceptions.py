@@ -11,16 +11,6 @@ class DigestMismatchError(ValueError):
     """Error raised when two compared digest values are not equal."""
 
 
-class MalformedConfigurationError(ValueError):
-    """Error raised when assertions about a configuration fail."""
-
-    def __init__(
-        self, message: str = "Configuration is malformed!", *, config: Any = None
-    ):
-        super().__init__(message)
-        self.config = config
-
-
 class NoSignatureError(RuntimeError):
     """Error raised when a signed image does not contain any signatures."""
 
