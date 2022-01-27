@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Docker verify command line interface."""
+"""OpenShift mirror command line interface."""
 
 import logging
 import sys

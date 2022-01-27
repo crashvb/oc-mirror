@@ -10,7 +10,6 @@ import re
 import tarfile
 import time
 
-from io import BytesIO
 from json import loads
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,7 +25,7 @@ from docker_registry_client_async import (
     ImageName,
 )
 from docker_sign_verify import ImageConfig, RegistryV2Manifest, RegistryV2ImageSource
-from docker_sign_verify.utils import be_kind_rewind, chunk_file
+from docker_sign_verify.utils import be_kind_rewind
 from pretty_bad_protocol import GPG
 from pretty_bad_protocol._parsers import Verify
 from pretty_bad_protocol._util import _make_binary_stream
@@ -36,22 +35,11 @@ from .exceptions import DigestMismatchError, NoSignatureError, SignatureMismatch
 from .imagestream import ImageStream
 from .singleassignment import SingleAssignment
 from .specs import OpenShiftReleaseSpecs
+from .utils import read_from_tar
 
 pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
-
-
-async def read_from_tar(tar_file, tarinfo: tarfile.TarInfo) -> bytes:
-    """Reads an entry from a tar file into memory."""
-    bytesio = BytesIO()
-    await chunk_file(
-        tar_file.extractfile(tarinfo),
-        bytesio,
-        file_in_is_async=False,
-        file_out_is_async=False,
-    )
-    return bytesio.getvalue()
 
 
 class TypingDetachedSignature(NamedTuple):

@@ -23,7 +23,7 @@ setup(
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: Apache Software License",
+        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
@@ -31,6 +31,7 @@ setup(
     entry_points="""
         [console_scripts]
         oc-mirror=oc_mirror.scripts.oc_mirror:cli
+        op-mirror=oc_mirror.scripts.op_mirror:cli
     """,
     extras_require={
         "dev": [

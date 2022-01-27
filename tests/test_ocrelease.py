@@ -2,7 +2,7 @@
 
 # pylint: disable=redefined-outer-name
 
-"""Manifest tests."""
+"""OpenShift release tests."""
 
 import logging
 

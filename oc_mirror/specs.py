@@ -16,3 +16,12 @@ class OpenShiftReleaseSpecs:
         "release.openshift.io/verification-config-map"
     )
     RELEASE_METADATA = "release-metadata"
+
+
+class OperatorReleaseSpecs:
+    """
+    Operator string literals.
+    """
+
+    DATABASE_PATH_PREFIX = "database/"
+    INDEX_DATABASE_NAME = "index.db"
