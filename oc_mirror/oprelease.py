@@ -12,8 +12,6 @@ import tarfile
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional
 
-import pytest
-
 from aiotempfile.aiotempfile import open as aiotempfile
 from docker_registry_client_async import (
     FormattedSHA256,
@@ -25,8 +23,6 @@ from docker_sign_verify.utils import be_kind_rewind
 from .singleassignment import SingleAssignment
 from .specs import OperatorReleaseSpecs
 from .utils import read_from_tar
-
-pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
 

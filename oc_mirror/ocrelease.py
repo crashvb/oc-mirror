@@ -16,8 +16,6 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 from yaml import load_all, SafeLoader
 
-import pytest
-
 from aiohttp.typedefs import LooseHeaders
 from aiotempfile.aiotempfile import open as aiotempfile
 from docker_registry_client_async import (
@@ -36,8 +34,6 @@ from .imagestream import ImageStream
 from .singleassignment import SingleAssignment
 from .specs import OpenShiftReleaseSpecs
 from .utils import read_from_tar
-
-pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
 
