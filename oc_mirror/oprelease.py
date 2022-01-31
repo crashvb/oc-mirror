@@ -189,7 +189,9 @@ async def get_release_metadata(
                 {"channel": channel, "package": package},
             ).fetchall()
             if len(rows) != 1:
-                raise Exception(f"Unexpected number of rows returned ({len(rows)}) for package, channel: {package}, {channel}")
+                raise Exception(
+                    f"Unexpected number of rows returned ({len(rows)}) for package, channel: {package}, {channel}"
+                )
             package_bundle[package] = rows[0][0]
         LOGGER.debug("Processing %d bundle(s).", len(package_bundle))
 
@@ -243,7 +245,9 @@ async def log_release_metadata(
     if sort_metadata:
         operators = sorted(release_metadata.operators, key=lambda x: x.package)
     for operator in operators:
-        LOGGER.info(f"  {operator.package} -> {operator.bundle} ({len(operator.images)}):")
+        LOGGER.info(
+            f"  package: {operator.package}  bundle: {operator.bundle}  channel: {operator.channel}  images: {len(operator.images)}"
+        )
 
         images = operator.images
         if sort_metadata:

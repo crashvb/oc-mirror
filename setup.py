@@ -52,7 +52,7 @@ setup(
         "docker-registry-client-async>=0.1.6",
         "docker-sign-verify>=1.1.2",
         "pretty-bad-protocol>=3.1.1",
-        "pyyaml"
+        "pyyaml",
     ],
     keywords="integrity mirror oc oc-mirror openshift sign signatures verify",
     license="GNU General Public LIcense v3.0",
