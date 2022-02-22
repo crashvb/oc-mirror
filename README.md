@@ -27,7 +27,26 @@ $ python -m pip install --editable .[dev]
 
 ## Usage
 
-TODO
+```bash
+DRCA_CREDENTIALS_STORE=~/.docker/quay.io-pull-secret.json \
+oc-mirror \
+  --signature-store https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release \
+  mirror \
+  quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64 \
+  some-other-registry.com:5000/openshift-release-dev/ocp-release:4.4.6-x86_64
+```
+
+```bash
+DRCA_CREDENTIALS_STORE=~/.docker/quay.io-pull-secret.json \
+op-mirror \
+  --no-check-signatures \
+  mirror \
+  registry.redhat.io/redhat/redhat-operator-index:v4.8 \
+  some-other-registry.com:5000/redhat/redhat-operator-index:v4.8 \
+  compliance-operator:release-0.1 \
+  local-storage-operator \
+  ocs-operator
+```
 
 ### Environment Variables
 

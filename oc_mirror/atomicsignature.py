@@ -21,6 +21,32 @@ class AtomicSignature(JsonBytes):
 
     TYPE = "atomic container signature"
 
+    @staticmethod
+    def minimal(
+        *,
+        docker_manifest_digest: FormattedSHA256,
+        docker_reference: str,
+        _type: str = TYPE,
+    ) -> "AtomicSignature":
+        """
+        Creates a minimalistic atomic signature.
+
+        Args:
+            docker_manifest_digest: The docker manifest digest.
+            docker_reference: The docker reference.
+            _type: The signature type.
+
+        Returns:
+            The corresponding atomic signature.
+        """
+        atomic_signature = (
+            f'{{"critical":{{"image":{{"docker-manifest-digest": "{docker_manifest_digest}"}},"type": "{_type}",'
+            f'"identity": {{"docker-reference": "{docker_reference}"}}}}}}'.encode(
+                encoding="utf-8"
+            )
+        )
+        return AtomicSignature(atomic_signature)
+
     def get_docker_manifest_digest(self) -> FormattedSHA256:
         """
         Retrieves the docker manifest digest.

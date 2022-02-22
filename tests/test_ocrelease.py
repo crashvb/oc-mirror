@@ -6,17 +6,14 @@
 
 import logging
 
-from ssl import create_default_context
 from typing import Dict, List, Set
 
-import certifi
 import pytest
 
-from _pytest.logging import LogCaptureFixture
 from docker_registry_client_async import FormattedSHA256, ImageName
-from docker_sign_verify import RegistryV2ImageSource
+from docker_sign_verify import RegistryV2
+from _pytest.logging import LogCaptureFixture
 from pytest_docker_registry_fixtures import DockerRegistrySecure
-
 
 from oc_mirror.ocrelease import (
     get_release_metadata,
@@ -25,73 +22,11 @@ from oc_mirror.ocrelease import (
     TypingRegexSubstitution,
 )
 
+from .testutils import equal_if_unqualified
+
 pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
-
-
-# TODO: What is the best way to code `DRCA_DEBUG=1 DRCA_CREDENTIALS_STORE=~/.docker/quay.io-pull-secret.json` into
-#       this fixture?
-
-
-@pytest.fixture(scope="session")
-def pdrf_scale_factor() -> int:
-    """Scale PDRF to 2."""
-    return 2
-
-
-@pytest.fixture
-async def registry_v2_image_source(
-    docker_registry_secure: DockerRegistrySecure,
-) -> RegistryV2ImageSource:
-    """Provides a RegistryV2ImageSource instance."""
-    # Do not use caching; get a new instance for each test
-    ssl_context = docker_registry_secure.ssl_context
-    ssl_context.load_verify_locations(cafile=certifi.where())
-    async with RegistryV2ImageSource(ssl=ssl_context) as registry_v2_image_source:
-        credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
-        await registry_v2_image_source.docker_registry_client_async.add_credentials(
-            docker_registry_secure.endpoint, credentials
-        )
-
-        yield registry_v2_image_source
-
-
-@pytest.fixture
-async def registry_v2_image_source_list(
-    docker_registry_secure_list: List[DockerRegistrySecure],
-) -> RegistryV2ImageSource:
-    """Provides a RegistryV2ImageSource instance."""
-    # Do not use caching; get a new instance for each test
-    ssl_context = create_default_context(cafile=certifi.where())
-    for docker_registry_secure in docker_registry_secure_list:
-        ssl_context.load_verify_locations(cafile=str(docker_registry_secure.cacerts))
-    async with RegistryV2ImageSource(ssl=ssl_context) as registry_v2_image_source:
-        for docker_registry_secure in docker_registry_secure_list:
-            credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
-            await registry_v2_image_source.docker_registry_client_async.add_credentials(
-                docker_registry_secure.endpoint, credentials
-            )
-
-        yield registry_v2_image_source
-
-
-def _equal_if_unqualified(image_name0: ImageName, image_name1: ImageName) -> bool:
-    """
-    Determines if two images names are equal if evaluated as unqualified.
-
-    Args:
-        image_name0: The name of the first image.
-        image_name1: The name of the second image.
-
-    Returns:
-        True if the images names are equal without considering the endpoint component.
-    """
-    img_name0 = image_name0.clone()
-    img_name0.endpoint = None
-    img_name1 = image_name1.clone()
-    img_name1.endpoint = None
-    return str(img_name0) == str(img_name1)
 
 
 @pytest.mark.online
@@ -125,7 +60,7 @@ def _equal_if_unqualified(image_name0: ImageName, image_name1: ImageName) -> boo
     ],
 )
 async def test_get_release_metadata(
-    registry_v2_image_source: RegistryV2ImageSource,
+    registry_v2: RegistryV2,
     release: str,
     count_blobs: int,
     count_manifests: int,
@@ -137,13 +72,12 @@ async def test_get_release_metadata(
     manifest_digest: FormattedSHA256,
 ):
     """Tests release metadata retrieval from a remote registry."""
-
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     # Retrieve the release metadata ...
     image_name = ImageName.parse(release)
     result = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source, release_image_name=image_name
+        registry_v2=registry_v2, release_image_name=image_name
     )
 
     assert result.blobs
@@ -184,17 +118,16 @@ async def test_get_release_metadata(
 )
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
-    registry_v2_image_source: RegistryV2ImageSource,
+    registry_v2: RegistryV2,
     release: str,
 ):
     """Tests release replication to a local registry."""
-
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     # Retrieve the release metadata ...
     image_name_src = ImageName.parse(release)
     release_metadata_src = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source,
+        registry_v2=registry_v2,
         release_image_name=image_name_src,
         verify=False,
     )
@@ -203,14 +136,14 @@ async def test_put_release_from_internet(
     image_name_dest = image_name_src.clone()
     image_name_dest.endpoint = docker_registry_secure.endpoint
     await put_release(
-        mirror_image_name=image_name_dest,
-        registry_v2_image_source=registry_v2_image_source,
+        release_name=image_name_dest,
+        registry_v2=registry_v2,
         release_metadata=release_metadata_src,
     )
 
     # Retrieve the release metadata (again) ...
     release_metadata_dest = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source,
+        registry_v2=registry_v2,
         release_image_name=image_name_dest,
     )
 
@@ -246,7 +179,7 @@ async def test_put_release_from_internet(
     # Release metadata manifest tags should be the same ...
     for image_name in release_metadata_src.manifests.keys():
         # Special Case: The release image in imposed in the metadata, not derived ...
-        if _equal_if_unqualified(image_name, image_name_src_digest):
+        if equal_if_unqualified(image_name, image_name_src_digest):
             assert (
                 release_metadata_dest.manifests[image_name_dest_digest]
                 == release_metadata_src.manifests[image_name_src_digest]
@@ -290,18 +223,17 @@ async def test_put_release_from_internet(
 )
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
-    registry_v2_image_source_list: RegistryV2ImageSource,
+    registry_v2_list: RegistryV2,
     release: str,
 ):
     # pylint: disable=too-many-locals
     """Tests release replication to a local registry."""
-
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     # Retrieve the release metadata (hop 0)...
     image_name0 = ImageName.parse(release)
     release_metadata0 = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source_list,
+        registry_v2=registry_v2_list,
         release_image_name=image_name0,
         verify=False,
     )
@@ -310,15 +242,15 @@ async def test_put_release_from_internal(
     image_name1 = image_name0.clone()
     image_name1.endpoint = docker_registry_secure_list[0].endpoint
     await put_release(
-        mirror_image_name=image_name1,
-        registry_v2_image_source=registry_v2_image_source_list,
+        release_name=image_name1,
+        registry_v2=registry_v2_list,
         release_metadata=release_metadata0,
         verify=False,
     )
 
     # Retrieve the release metadata (hop 1) ...
     release_metadata1 = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source_list,
+        registry_v2=registry_v2_list,
         release_image_name=image_name1,
         verify=False,
     )
@@ -337,14 +269,14 @@ async def test_put_release_from_internal(
     image_name2 = image_name0.clone()
     image_name2.endpoint = docker_registry_secure_list[1].endpoint
     await put_release(
-        mirror_image_name=image_name2,
-        registry_v2_image_source=registry_v2_image_source_list,
+        release_name=image_name2,
+        registry_v2=registry_v2_list,
         release_metadata=release_metadata1_translated,
     )
 
     # Retrieve the release metadata (hop 2) ...
     release_metadata2 = await get_release_metadata(
-        registry_v2_image_source=registry_v2_image_source_list,
+        registry_v2=registry_v2_list,
         release_image_name=image_name2,
     )
 
@@ -380,7 +312,7 @@ async def test_put_release_from_internal(
     # Release metadata manifest tags should be the same ...
     for image_name in release_metadata0.manifests.keys():
         # Special Case: The release image in imposed in the metadata, not derived ...
-        if _equal_if_unqualified(image_name, image_name0_digest):
+        if equal_if_unqualified(image_name, image_name0_digest):
             assert (
                 release_metadata2.manifests[image_name2_digest]
                 == release_metadata0.manifests[image_name0_digest]
@@ -416,7 +348,7 @@ async def test_put_release_from_internal(
     )
 
 
-# async def test_debug_rich(registry_v2_image_source: RegistryV2ImageSource):
+# async def test_debug_rich(registry_v2: RegistryV2):
 #     """Tests release replication to a local registry."""
 #
 #     data = [
@@ -431,7 +363,7 @@ async def test_put_release_from_internal(
 #     ]
 #     for _tuple in data:
 #         image_name = ImageName.parse(_tuple[0])
-#         manifest = await registry_v2_image_source.get_manifest(image_name, accept=_tuple[1])
+#         manifest = await registry_v2.get_manifest(image_name, accept=_tuple[1])
 #         assert manifest
 #         logging.debug("%s", _tuple[1])
 #         logging.debug("\tImage Name : %s", image_name)

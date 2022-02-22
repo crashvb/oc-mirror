@@ -4,11 +4,16 @@
 
 """Configures execution of pytest."""
 
-from typing import Generator
+from ssl import create_default_context
+from typing import Generator, List
 
+import certifi
 import pytest
 
 from click.testing import CliRunner
+from docker_sign_verify import RegistryV2
+from pytest_asyncio.plugin import Mode
+from pytest_docker_registry_fixtures import DockerRegistrySecure
 
 # https://stackoverflow.com/questions/51883573/using-a-command-line-option-in-a-pytest-skip-if-condition
 
@@ -58,6 +63,14 @@ def pytest_configure(config):
         "markers", "online_modification: allow modification of online content."
     )
 
+    config.option.asyncio_mode = Mode.AUTO
+
+
+@pytest.fixture(scope="session")
+def pdrf_scale_factor() -> int:
+    """Scale PDRF to 2."""
+    return 2
+
 
 @pytest.fixture
 def clirunner() -> Generator[CliRunner, None, None]:
@@ -65,3 +78,41 @@ def clirunner() -> Generator[CliRunner, None, None]:
     runner = CliRunner()
     with runner.isolated_filesystem():
         yield runner
+
+
+# TODO: What is the best way to code `DRCA_DEBUG=1 DRCA_CREDENTIALS_STORE=~/.docker/quay.io-pull-secret.json` into
+#       this fixture?
+@pytest.fixture
+async def registry_v2(
+    docker_registry_secure: DockerRegistrySecure,
+) -> RegistryV2:
+    """Provides a RegistryV2 instance."""
+    # Do not use caching; get a new instance for each test
+    ssl_context = docker_registry_secure.ssl_context
+    ssl_context.load_verify_locations(cafile=certifi.where())
+    async with RegistryV2(ssl=ssl_context) as registry_v2:
+        credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
+        await registry_v2.docker_registry_client_async.add_credentials(
+            docker_registry_secure.endpoint, credentials
+        )
+
+        yield registry_v2
+
+
+@pytest.fixture
+async def registry_v2_list(
+    docker_registry_secure_list: List[DockerRegistrySecure],
+) -> RegistryV2:
+    """Provides a RegistryV2 instance."""
+    # Do not use caching; get a new instance for each test
+    ssl_context = create_default_context(cafile=certifi.where())
+    for docker_registry_secure in docker_registry_secure_list:
+        ssl_context.load_verify_locations(cafile=str(docker_registry_secure.cacerts))
+    async with RegistryV2(ssl=ssl_context) as registry_v2:
+        for docker_registry_secure in docker_registry_secure_list:
+            credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
+            await registry_v2.docker_registry_client_async.add_credentials(
+                docker_registry_secure.endpoint, credentials
+            )
+
+        yield registry_v2
