@@ -4,6 +4,7 @@
 
 """Operator release tests."""
 
+import asyncio
 import logging
 
 from typing import Dict, Generator, List, NamedTuple, Optional
@@ -28,6 +29,13 @@ from .testutils import equal_if_unqualified, get_test_data
 pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
+
+# Bug Fix: https://github.com/crashvb/docker-registry-client-async/issues/24
+#
+# Right now this is known to leave a nasty "Fatal error on SSL transport" error
+# at the end of the test execution; however, without this we cannot test using
+# a TLS-in-TLS proxy ...
+setattr(asyncio.sslproto._SSLProtocolTransport, "_start_tls_compatible", True)
 
 
 class TypingGetTestDataLocal(NamedTuple):
@@ -81,7 +89,7 @@ def known_good_release(request) -> TypingGetTestDataLocal:
 @pytest.mark.online
 async def test_get_release_metadata(
     known_good_release: TypingGetTestDataLocal,
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
 ):
     """Tests release metadata retrieval from a remote registry."""
     logging.getLogger("gnupg").setLevel(logging.FATAL)
@@ -89,7 +97,7 @@ async def test_get_release_metadata(
     # An exception should be raised if the image configuration is not signed
     with pytest.raises(NoSignatureError) as exception:
         await get_release_metadata(
-            registry_v2=registry_v2,
+            registry_v2=registry_v2_proxy,
             index_name=known_good_release.index_name,
             package_channel=known_good_release.package_channel,
             signature_stores=known_good_release.signature_stores,
@@ -99,7 +107,7 @@ async def test_get_release_metadata(
 
     # Retrieve the release metadata (which is unsigned from the vendor / community =/ ) ...
     result = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         index_name=known_good_release.index_name,
         package_channel=known_good_release.package_channel,
         signature_stores=known_good_release.signature_stores,
@@ -145,7 +153,7 @@ async def test_log_release_metadata(
     bundle_name: str,
     caplog: LogCaptureFixture,
     package_channel: Dict[str, str],
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
     related_image: str,
     release: str,
 ):
@@ -157,7 +165,7 @@ async def test_log_release_metadata(
     # Retrieve the release metadata ...
     image_name = ImageName.parse(release)
     result = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         index_name=image_name,
         package_channel=package_channel,
         verify=False,
@@ -180,14 +188,14 @@ async def test_log_release_metadata(
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
     known_good_release: TypingGetTestDataLocal,
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
 ):
     """Tests release replication to a local registry."""
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     # Retrieve the release metadata ...
     release_metadata_src = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         index_name=known_good_release.index_name,
         package_channel=known_good_release.package_channel,
         verify=False,
@@ -195,17 +203,17 @@ async def test_put_release_from_internet(
 
     # Replicate the release ...
     image_name_dest = known_good_release.index_name.clone()
-    image_name_dest.endpoint = docker_registry_secure.endpoint
+    image_name_dest.endpoint = docker_registry_secure.endpoint_name
     await put_release(
         index_name=image_name_dest,
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         release_metadata=release_metadata_src,
         verify=False,
     )
 
     # Retrieve the release metadata (again) ...
     release_metadata_dest = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         index_name=image_name_dest,
         package_channel=known_good_release.package_channel,
         verify=False,
@@ -255,7 +263,7 @@ async def test_put_release_from_internet(
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
     known_good_release: TypingGetTestDataLocal,
-    registry_v2_list: RegistryV2,
+    registry_v2_list_proxy: RegistryV2,
 ):
     # pylint: disable=too-many-locals
     """Tests release replication to a local registry."""
@@ -266,16 +274,16 @@ async def test_put_release_from_internal(
     release_metadata0 = await get_release_metadata(
         index_name=image_name0,
         package_channel=known_good_release.package_channel,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         verify=False,
     )
 
     # Replicate the release (hop 1)...
     image_name1 = image_name0.clone()
-    image_name1.endpoint = docker_registry_secure_list[0].endpoint
+    image_name1.endpoint = docker_registry_secure_list[0].endpoint_name
     await put_release(
         index_name=image_name1,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_metadata=release_metadata0,
         verify=False,
     )
@@ -284,18 +292,19 @@ async def test_put_release_from_internal(
     release_metadata1 = await get_release_metadata(
         index_name=image_name1,
         package_channel=known_good_release.package_channel,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         verify=False,
     )
 
     # Translate to the second registry ...
     regex_substitutions = [
         TypingRegexSubstitution(
-            pattern=r"quay\.io", replacement=docker_registry_secure_list[0].endpoint
+            pattern=r"quay\.io",
+            replacement=docker_registry_secure_list[0].endpoint_name,
         ),
         TypingRegexSubstitution(
             pattern=r"registry\.redhat\.io",
-            replacement=docker_registry_secure_list[0].endpoint,
+            replacement=docker_registry_secure_list[0].endpoint_name,
         ),
     ]
     release_metadata1_translated = await translate_release_metadata(
@@ -306,10 +315,10 @@ async def test_put_release_from_internal(
 
     # Replicate the release (hop 2) ...
     image_name2 = image_name0.clone()
-    image_name2.endpoint = docker_registry_secure_list[1].endpoint
+    image_name2.endpoint = docker_registry_secure_list[1].endpoint_name
     await put_release(
         index_name=image_name2,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_metadata=release_metadata1_translated,
         verify=False,
     )
@@ -318,7 +327,7 @@ async def test_put_release_from_internal(
     release_metadata2 = await get_release_metadata(
         index_name=image_name2,
         package_channel=known_good_release.package_channel,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         verify=False,
     )
 

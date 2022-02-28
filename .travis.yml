@@ -1,3 +1,8 @@
+before_install:
+- sudo mv /usr/bin/gpg /usr/bin/gpg1
+- sudo update-alternatives --verbose --install /usr/bin/gpg gnupg /usr/bin/gpg2 50
+- which gpg
+- gpg --version
 env:
 - TRAVIS=true
 install:

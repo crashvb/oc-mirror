@@ -103,18 +103,20 @@ async def test_simple(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
     )
 
     # Verify the generated signature against the test data ...
-    result = await atomicsigner.atomicverify(digest=digest, image_name=image_name)
-    assert result.fingerprint == atomicsigner.keyid
-    assert atomicsigner.keyid.endswith(result.key_id)
-    assert "failed" not in result.signer_long
-    assert "failed" not in result.signer_short
-    assert result.status_atomic is None
-    assert result.status_gpg == "signature valid"
-    assert result.timestamp
-    assert result.trust == GPGTrust.ULTIMATE.value
-    assert result.type == "atomicsigner"
-    assert result.username == gnupg_keypair.uids[0]
-    assert result.valid
+    results = await atomicsigner.atomicverify(digest=digest, image_name=image_name)
+    assert results
+    for result in results:
+        assert result.fingerprint == atomicsigner.keyid
+        assert atomicsigner.keyid.endswith(result.key_id)
+        assert "failed" not in result.signer_long
+        assert "failed" not in result.signer_short
+        assert result.status_atomic is None
+        assert result.status_gpg == "signature valid"
+        assert result.timestamp
+        assert result.trust == GPGTrust.ULTIMATE.value
+        assert result.type == "atomicsigner"
+        assert result.username == gnupg_keypair.uids[0]
+        assert result.valid
 
 
 async def test_bad_data(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
@@ -135,15 +137,17 @@ async def test_bad_data(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair)
     # data += b"tampertampertamper"
 
     # Verify the generated signature against the test data ...
-    result = await atomicsigner.atomicverify(digest=digest, image_name=image_name)
-    assert result.fingerprint is None
-    assert atomicsigner.keyid.endswith(result.key_id)
-    assert "failed" not in result.signer_long
-    assert "failed" not in result.signer_short
-    assert result.status_atomic is not None
-    assert result.status_gpg != "signature valid"
-    assert result.timestamp is None
-    assert result.trust == GPGTrust.UNDEFINED.value
-    assert result.type == "gpg"
-    assert result.username == gnupg_keypair.uids[0]
-    assert not result.valid
+    results = await atomicsigner.atomicverify(digest=digest, image_name=image_name)
+    assert results
+    for result in results:
+        assert result.fingerprint is None
+        assert atomicsigner.keyid.endswith(result.key_id)
+        assert "failed" not in result.signer_long
+        assert "failed" not in result.signer_short
+        assert result.status_atomic is not None
+        assert result.status_gpg != "signature valid"
+        assert result.timestamp is None
+        assert result.trust == GPGTrust.UNDEFINED.value
+        assert result.type == "gpg"
+        assert result.username == gnupg_keypair.uids[0]
+        assert not result.valid

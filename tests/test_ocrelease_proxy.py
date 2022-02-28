@@ -4,6 +4,7 @@
 
 """OpenShift release tests."""
 
+import asyncio
 import logging
 
 from typing import Dict, List, Set
@@ -28,6 +29,13 @@ from .testutils import equal_if_unqualified
 pytestmark = [pytest.mark.asyncio]
 
 LOGGER = logging.getLogger(__name__)
+
+# Bug Fix: https://github.com/crashvb/docker-registry-client-async/issues/24
+#
+# Right now this is known to leave a nasty "Fatal error on SSL transport" error
+# at the end of the test execution; however, without this we cannot test using
+# a TLS-in-TLS proxy ...
+setattr(asyncio.sslproto._SSLProtocolTransport, "_start_tls_compatible", True)
 
 
 @pytest.mark.online
@@ -61,7 +69,7 @@ LOGGER = logging.getLogger(__name__)
     ],
 )
 async def test_get_release_metadata(
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
     release: str,
     count_blobs: int,
     count_manifests: int,
@@ -78,7 +86,7 @@ async def test_get_release_metadata(
     # Retrieve the release metadata ...
     image_name = ImageName.parse(release)
     result = await get_release_metadata(
-        registry_v2=registry_v2, release_name=image_name
+        registry_v2=registry_v2_proxy, release_name=image_name
     )
 
     assert result.blobs
@@ -124,7 +132,7 @@ async def test_get_release_metadata(
 async def test_log_release_metadata(
     caplog: LogCaptureFixture,
     fingerprint: str,
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
     release: str,
     username: str,
 ):
@@ -136,7 +144,7 @@ async def test_log_release_metadata(
     # Retrieve the release metadata ...
     image_name = ImageName.parse(release)
     result = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         release_name=image_name,
     )
     assert result
@@ -155,7 +163,7 @@ async def test_log_release_metadata(
 )
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
-    registry_v2: RegistryV2,
+    registry_v2_proxy: RegistryV2,
     release: str,
 ):
     """Tests release replication to a local registry."""
@@ -164,23 +172,23 @@ async def test_put_release_from_internet(
     # Retrieve the release metadata ...
     image_name_src = ImageName.parse(release)
     release_metadata_src = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         release_name=image_name_src,
         verify=False,
     )
 
     # Replicate the release ...
     image_name_dest = image_name_src.clone()
-    image_name_dest.endpoint = docker_registry_secure.endpoint
+    image_name_dest.endpoint = docker_registry_secure.endpoint_name
     await put_release(
         release_name=image_name_dest,
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         release_metadata=release_metadata_src,
     )
 
     # Retrieve the release metadata (again) ...
     release_metadata_dest = await get_release_metadata(
-        registry_v2=registry_v2,
+        registry_v2=registry_v2_proxy,
         release_name=image_name_dest,
     )
 
@@ -260,7 +268,7 @@ async def test_put_release_from_internet(
 )
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
-    registry_v2_list: RegistryV2,
+    registry_v2_list_proxy: RegistryV2,
     release: str,
 ):
     # pylint: disable=too-many-locals
@@ -270,24 +278,24 @@ async def test_put_release_from_internal(
     # Retrieve the release metadata (hop 0)...
     image_name0 = ImageName.parse(release)
     release_metadata0 = await get_release_metadata(
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_name=image_name0,
         verify=False,
     )
 
     # Replicate the release (hop 1)...
     image_name1 = image_name0.clone()
-    image_name1.endpoint = docker_registry_secure_list[0].endpoint
+    image_name1.endpoint = docker_registry_secure_list[0].endpoint_name
     await put_release(
         release_name=image_name1,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_metadata=release_metadata0,
         verify=False,
     )
 
     # Retrieve the release metadata (hop 1) ...
     release_metadata1 = await get_release_metadata(
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_name=image_name1,
         verify=False,
     )
@@ -295,7 +303,8 @@ async def test_put_release_from_internal(
     # Translate to the second registry ...
     regex_substitutions = [
         TypingRegexSubstitution(
-            pattern=r"quay\.io", replacement=docker_registry_secure_list[0].endpoint
+            pattern=r"quay\.io",
+            replacement=docker_registry_secure_list[0].endpoint_name,
         )
     ]
     release_metadata1_translated = await translate_release_metadata(
@@ -304,16 +313,16 @@ async def test_put_release_from_internal(
 
     # Replicate the release (hop 2) ...
     image_name2 = image_name0.clone()
-    image_name2.endpoint = docker_registry_secure_list[1].endpoint
+    image_name2.endpoint = docker_registry_secure_list[1].endpoint_name
     await put_release(
         release_name=image_name2,
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_metadata=release_metadata1_translated,
     )
 
     # Retrieve the release metadata (hop 2) ...
     release_metadata2 = await get_release_metadata(
-        registry_v2=registry_v2_list,
+        registry_v2=registry_v2_list_proxy,
         release_name=image_name2,
     )
 
@@ -385,7 +394,7 @@ async def test_put_release_from_internal(
     )
 
 
-# async def test_debug_rich(registry_v2: RegistryV2):
+# async def test_debug_rich(registry_v2_proxy: RegistryV2):
 #     """Tests release replication to a local registry."""
 #
 #     data = [
@@ -400,7 +409,7 @@ async def test_put_release_from_internal(
 #     ]
 #     for _tuple in data:
 #         image_name = ImageName.parse(_tuple[0])
-#         manifest = await registry_v2.get_manifest(image_name, accept=_tuple[1])
+#         manifest = await registry_v2_proxy.get_manifest(image_name, accept=_tuple[1])
 #         assert manifest
 #         logging.debug("%s", _tuple[1])
 #         logging.debug("\tImage Name : %s", image_name)
