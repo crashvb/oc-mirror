@@ -29,7 +29,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 @contextmanager
-def ca_trust_store(path: Path):
+def drca_cacerts(path: Path):
     """Context manager to globally define the DRCA CA trust store."""
     key = "DRCA_CACERTS"
     old = os.environ.get(key, None)
@@ -50,20 +50,7 @@ def ca_trust_store(path: Path):
 
 
 @contextmanager
-def gnupghome(path: Path):
-    """Context manager to globally define the GnuPG home directory."""
-    key = "GNUPGHOME"
-    old = os.environ.get(key, None)
-    os.environ[key] = str(path)
-    yield None
-    if old is not None:
-        os.environ[key] = old
-    else:
-        del os.environ[key]
-
-
-@contextmanager
-def apache_secure_credentials(apache_secure: ApacheSecure):
+def drca_credentials_store(apache_secure: ApacheSecure):
     """
     Context manager to globally define the DRCA credentials store.
 
@@ -89,6 +76,19 @@ def apache_secure_credentials(apache_secure: ApacheSecure):
     else:
         del os.environ[key]
     tmpfile.close()
+
+
+@contextmanager
+def gnupghome(path: Path):
+    """Context manager to globally define the GnuPG home directory."""
+    key = "GNUPGHOME"
+    old = os.environ.get(key, None)
+    os.environ[key] = str(path)
+    yield None
+    if old is not None:
+        os.environ[key] = old
+    else:
+        del os.environ[key]
 
 
 def test_empty_args(clirunner):
@@ -150,9 +150,7 @@ def test_verify_no_signatures(
     image_name.digest = FormattedSHA256.calculate(
         f"random_value: {time()}".encode(encoding="utf-8")
     )
-    with apache_secure_credentials(apache_secure), ca_trust_store(
-        apache_secure.cacerts
-    ):
+    with drca_credentials_store(apache_secure), drca_cacerts(apache_secure.cacerts):
         result = runner.invoke(
             cli,
             args=[
@@ -178,9 +176,7 @@ def test_verify_not_found(
     caplog.set_level(logging.DEBUG)
 
     image_name = ImageName.parse(f"{apache_secure.endpoint}/foo/bar:{__name__}")
-    with apache_secure_credentials(apache_secure), ca_trust_store(
-        apache_secure.cacerts
-    ):
+    with drca_credentials_store(apache_secure), drca_cacerts(apache_secure.cacerts):
         result = runner.invoke(
             cli,
             args=[
@@ -211,7 +207,7 @@ def test_verify_signed(
         f"random_value: {time()}".encode(encoding="utf-8")
     )
     for signature_type in ["image-config", "manifest"]:
-        with apache_secure_credentials(apache_secure), ca_trust_store(
+        with drca_credentials_store(apache_secure), drca_cacerts(
             apache_secure.cacerts
         ), gnupghome(gnupg_keypair.gnupg_home):
             result = runner.invoke(
@@ -270,7 +266,7 @@ def test_verify_unauthorized(
     )
 
     # Note: Not using apache_secure_credentials().
-    with ca_trust_store(apache_secure.cacerts):
+    with drca_cacerts(apache_secure.cacerts):
         result = runner.invoke(
             cli,
             args=[

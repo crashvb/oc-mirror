@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 
-# pylint: disable=protected-access
-
 """Classes that provide signature functionality."""
 
 import logging
 
 from pathlib import Path
 from typing import List, NamedTuple, Optional
+from urllib.parse import urlparse
 
 import aiofiles
 
@@ -109,16 +108,24 @@ class AtomicSigner(GPGSigner):
     async def _find_all_signatures(
         self, *, digest: FormattedSHA256, location: str
     ) -> List[FindAllSignatures]:
+        # pylint: disable=protected-access
         """Retrieves the all signatures corresponding to a given digest from a signature store."""
         result = []
         client_session = await self.docker_registry_client_async._get_client_session()
         headers = await self._get_headers(endpoint=location)
+        proxy = await self._get_proxy(location=location)
         index = 0
         while True:
             index = index + 1
             url = f"{location}/sha256={digest.sha256}/signature-{index}"
             LOGGER.debug("Retrieving signature: %s ...", url)
-            response = await client_session.get(headers=headers, url=url)
+            response = await client_session.get(
+                headers=headers,
+                proxy=proxy,
+                proxy_auth=self.docker_registry_client_async.proxy_auth,
+                ssl=self.docker_registry_client_async.ssl,
+                url=url,
+            )
             if response.status > 400:
                 break
             LOGGER.debug("Signature retrieved.")
@@ -128,20 +135,55 @@ class AtomicSigner(GPGSigner):
         return result
 
     async def _get_headers(self, *, endpoint: str) -> LooseHeaders:
+        # pylint: disable=protected-access
         """Retrieves headers for remote requests."""
-        credentials = await self.docker_registry_client_async._get_credentials(
-            endpoint=endpoint
-        )
+        url_segments = urlparse(endpoint)
+        for i in [
+            url_segments.netloc,
+            f"{url_segments.scheme}://{url_segments.netloc}",
+            f"{url_segments.scheme}://{url_segments.netloc}/",
+            f"{url_segments.netloc}:{url_segments.port}",
+            f"{url_segments.scheme}://{url_segments.netloc}:{url_segments.port}",
+            f"{url_segments.scheme}://{url_segments.netloc}:{url_segments.port}/",
+        ]:
+            credentials = await self.docker_registry_client_async._get_credentials(
+                endpoint=i
+            )
+            if credentials:
+                break
         headers = await get_request_headers()
-        headers["Authorization"] = f"Basic {credentials}"
+        if credentials:
+            headers["Authorization"] = f"Basic {credentials}"
         return headers
 
+    async def _get_proxy(self, *, location: str) -> Optional[str]:
+        # pylint: disable=protected-access
+        """
+        Retrieves the proxy configuration for a given location.
+
+        Args:
+            location: The location for which to retrieve the proxy configuration.
+        """
+        url_segments = urlparse(location)
+        proxy = await self.docker_registry_client_async._get_proxy(
+            endpoint=url_segments.netloc, protocol=url_segments.scheme.lower()
+        )
+        return proxy
+
     async def _make_collection(self, *, digest: FormattedSHA256, location: str):
+        # pylint: disable=protected-access
         """Creates a remote collection (directory), if needed, for a given digest."""
         client_session = await self.docker_registry_client_async._get_client_session()
         headers = await self._get_headers(endpoint=location)
+        proxy = await self._get_proxy(location=location)
         url = f"{location}/sha256={digest.sha256}"
-        response = await client_session.get(headers=headers, url=url)
+        response = await client_session.get(
+            headers=headers,
+            proxy=proxy,
+            proxy_auth=self.docker_registry_client_async.proxy_auth,
+            ssl=self.docker_registry_client_async.ssl,
+            url=url,
+        )
         if response.status < 400:
             return
         LOGGER.debug("Creating collection: %s ...", url)
@@ -150,7 +192,10 @@ class AtomicSigner(GPGSigner):
                 allow_redirects=True,
                 headers=headers,
                 method="MKCOL",
+                proxy=proxy,
+                proxy_auth=self.docker_registry_client_async.proxy_auth,
                 raise_for_status=True,
+                ssl=self.docker_registry_client_async.ssl,
                 str_or_url=url,
             )
         )
@@ -159,6 +204,7 @@ class AtomicSigner(GPGSigner):
     async def _store_signature(
         self, *, digest: FormattedSHA256, location: str = None, signature: bytes
     ) -> FindAllSignatures:
+        # pylint: disable=protected-access
         """Replicates a given signature to a remote signature store."""
         if location is None:
             location = self.locations[0]
@@ -172,8 +218,15 @@ class AtomicSigner(GPGSigner):
         LOGGER.debug("Storing signature: %s ...", url)
         client_session = await self.docker_registry_client_async._get_client_session()
         headers = await self._get_headers(endpoint=location)
+        proxy = await self._get_proxy(location=location)
         await client_session.put(
-            headers=headers, data=signature, raise_for_status=True, url=url
+            data=signature,
+            headers=headers,
+            proxy=proxy,
+            proxy_auth=self.docker_registry_client_async.proxy_auth,
+            raise_for_status=True,
+            ssl=self.docker_registry_client_async.ssl,
+            url=url,
         )
         LOGGER.debug("Signature stored.")
         return FindAllSignatures(index=index, signature=signature, url=url)
