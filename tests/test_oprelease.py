@@ -23,7 +23,7 @@ from oc_mirror.oprelease import (
     TypingRegexSubstitution,
 )
 
-from .testutils import equal_if_unqualified, get_test_data
+from .testutils import equal_if_unqualified, get_test_data, needs_credentials
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -51,14 +51,16 @@ def get_release_data() -> Generator[TypingGetTestDataLocal, None, None]:
             ],
             signing_keys=[],
         ),
-        # TypingGetTestDataLocal(
-        #     index_name=ImageName.parse(
-        #         "registry.redhat.io/redhat/redhat-operator-index:v4.8"
-        #     ),
-        #     package_channel={"ocs-operator": "eus-4.8"},
-        #     signature_stores = ["https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release"],
-        #     signing_keys = [],
-        # ),
+        TypingGetTestDataLocal(
+            index_name=ImageName.parse(
+                "registry.redhat.io/redhat/redhat-operator-index:v4.8"
+            ),
+            package_channel={"ocs-operator": "eus-4.8"},
+            signature_stores=[
+                "https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release"
+            ],
+            signing_keys=[],
+        ),
     ]
     for data in dataset:
         yield data
@@ -79,6 +81,7 @@ def known_good_release(request) -> TypingGetTestDataLocal:
 
 
 @pytest.mark.online
+@needs_credentials("registry.redhat.io")
 async def test_get_release_metadata(
     known_good_release: TypingGetTestDataLocal,
     registry_v2: RegistryV2,
@@ -128,26 +131,11 @@ async def test_get_release_metadata(
 
 
 @pytest.mark.online
-@pytest.mark.parametrize(
-    "release,package_channel,bundle_image,bundle_name,related_image",
-    [
-        (
-            "registry.redhat.io/redhat/redhat-operator-index:v4.8",
-            {"ocs-operator": "eus-4.8"},
-            "registry.redhat.io/ocs4/ocs-operator-bundle@sha256:",
-            "ocs-operator.v4.8.8",
-            "registry.redhat.io/rhceph/rhceph-4-rhel8@sha256:",
-        ),
-    ],
-)
+@needs_credentials("registry.redhat.io")
 async def test_log_release_metadata(
-    bundle_image: str,
-    bundle_name: str,
+    known_good_release: TypingGetTestDataLocal,
     caplog: LogCaptureFixture,
-    package_channel: Dict[str, str],
     registry_v2: RegistryV2,
-    related_image: str,
-    release: str,
 ):
     """Tests logging of release metadata."""
     caplog.clear()
@@ -155,28 +143,33 @@ async def test_log_release_metadata(
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     # Retrieve the release metadata ...
-    image_name = ImageName.parse(release)
     result = await get_release_metadata(
         registry_v2=registry_v2,
-        index_name=image_name,
-        package_channel=package_channel,
+        index_name=known_good_release.index_name,
+        package_channel=known_good_release.package_channel,
+        signature_stores=known_good_release.signature_stores,
+        signing_keys=known_good_release.signing_keys,
         verify=False,
     )
     assert result
 
     for sort_metadata in [True, False]:
         await log_release_metadata(
-            index_name=image_name, release_metadata=result, sort_metadata=sort_metadata
+            index_name=known_good_release.index_name,
+            release_metadata=result,
+            sort_metadata=sort_metadata,
         )
-        assert bundle_image in caplog.text
-        assert bundle_name in caplog.text
-        assert str(image_name) in caplog.text
-        for key in package_channel.keys():
-            assert key in caplog.text
-        assert related_image in caplog.text
+        assert str(result.index_name) in caplog.text
+        for operator in result.operators:
+            assert operator.bundle in caplog.text
+            assert operator.channel in caplog.text
+            for image in operator.images:
+                assert str(image) in caplog.text
+            assert operator.package in caplog.text
 
 
 @pytest.mark.online_modification
+@needs_credentials("registry.redhat.io")
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
     known_good_release: TypingGetTestDataLocal,
@@ -252,6 +245,7 @@ async def test_put_release_from_internet(
 
 
 @pytest.mark.online_modification
+@needs_credentials("registry.redhat.io")
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
     known_good_release: TypingGetTestDataLocal,

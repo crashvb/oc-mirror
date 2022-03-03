@@ -200,7 +200,7 @@ class AtomicSigner(GPGSigner):
 
     async def atomicsign(
         self, *, digest: FormattedSHA256, image_name: ImageName
-    ) -> str:
+    ) -> Optional[FindAllSignatures]:
         """Creates an atomic signature."""
         atomic_signature = AtomicSignature.minimal(
             docker_manifest_digest=digest, docker_reference=str(image_name)
@@ -246,7 +246,7 @@ class AtomicSigner(GPGSigner):
                 args=args, stdin=self.passphrase.encode("utf-8")
             )
             if execute_command.returncode:
-                return ""
+                return None
 
         # Retrieve the signature and cleanup ...
         try:
@@ -255,7 +255,7 @@ class AtomicSigner(GPGSigner):
                 find_all_signatures = await self._store_signature(
                     digest=digest, signature=data
                 )
-                return find_all_signatures.url
+                return find_all_signatures
         finally:
             signaturefile.unlink(missing_ok=True)
 

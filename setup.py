@@ -30,6 +30,7 @@ setup(
     description="A utility that can be used to mirror OpenShift releases between docker registries.",
     entry_points="""
         [console_scripts]
+        atomic=oc_mirror.scripts.atomic:cli
         oc-mirror=oc_mirror.scripts.oc_mirror:cli
         op-mirror=oc_mirror.scripts.op_mirror:cli
     """,
@@ -53,7 +54,7 @@ setup(
         "aiofiles",
         "click",
         "docker-registry-client-async>=0.2.1",
-        "docker-sign-verify>=1.1.2",
+        "docker-sign-verify>=2.0.2",
         "pretty-bad-protocol>=3.1.1",
         "pyyaml",
     ],

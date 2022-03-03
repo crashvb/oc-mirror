@@ -43,18 +43,6 @@ async def docker_registry_client_async(
         yield docker_registry_client_async
 
 
-# @pytest.fixture()
-# async def known_good_digest() -> FormattedSHA256:
-#     return FormattedSHA256.parse(
-#         "sha256:7613d8f7db639147b91b16b54b24cfa351c3cbde6aa7b7bf1b9c80c260efad06"
-#     )
-
-
-# @pytest.fixture()
-# async def known_good_image() -> ImageName:
-#     return ImageName.parse("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64")
-
-
 @pytest.fixture()
 def signaturestore(apache_secure: ApacheSecure) -> str:
     """Provides a modifiable signature store location."""
@@ -80,14 +68,6 @@ def atomicsigner(
 # TODO: Add tests for protected methods ...
 
 
-# async def test_for_signature(caplog: LogCaptureFixture):
-#     """Tests subclass instantiation."""
-#     caplog.set_level(logging.FATAL, logger="pretty_bad_protocol")
-#     result = Signer.for_signature("PGP SIGNATURE")
-#     assert result
-#     assert isinstance(result, AtomicSigner)
-
-
 async def test_simple(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
     """Test configuration signing and verification using GPG."""
     digest = FormattedSHA256.calculate(f"TEST DATA: {time()}".encode(encoding="utf-8"))
@@ -95,11 +75,18 @@ async def test_simple(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
     LOGGER.debug("Test Data:\n  digest     : %s\n  image name : %s", digest, image_name)
 
     # Generate a signature for the test data ...
-    url = await atomicsigner.atomicsign(digest=digest, image_name=image_name)
-    # LOGGER.debug("Received URL: %s", url)
-    assert url
+    find_all_signatures = await atomicsigner.atomicsign(
+        digest=digest, image_name=image_name
+    )
+    assert find_all_signatures
+    assert find_all_signatures.index
+    assert find_all_signatures.signature
+    assert find_all_signatures.url
     assert all(
-        [value in url for value in ["https", digest.replace(":", "="), "signature-"]]
+        [
+            value in find_all_signatures.url
+            for value in ["https", digest.replace(":", "="), "signature-"]
+        ]
     )
 
     # Verify the generated signature against the test data ...
@@ -119,6 +106,7 @@ async def test_simple(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
         assert result.valid
 
 
+@pytest.mark.skip("Test scenario not defined.")
 async def test_bad_data(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
     """Test configuration signing and verification using GPG with bad data."""
     digest = FormattedSHA256.calculate(f"TEST DATA: {time()}".encode(encoding="utf-8"))
@@ -126,15 +114,21 @@ async def test_bad_data(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair)
     LOGGER.debug("Test Data:\n  digest     : %s\n  image name : %s", digest, image_name)
 
     # Generate a signature for the test data ...
-    url = await atomicsigner.atomicsign(digest=digest, image_name=image_name)
-    # LOGGER.debug("Received URL: %s", url)
-    assert url
+    find_all_signatures = await atomicsigner.atomicsign(
+        digest=digest, image_name=image_name
+    )
+    assert find_all_signatures
+    assert find_all_signatures.index
+    assert find_all_signatures.signature
+    assert find_all_signatures.url
     assert all(
-        [value in url for value in ["https", digest.replace(":", "="), "signature-"]]
+        [
+            value in find_all_signatures.url
+            for value in ["https", digest.replace(":", "="), "signature-"]
+        ]
     )
 
-    # TODO: how to tamper with the data ... override it here?
-    # data += b"tampertampertamper"
+    # TODO: How to tamper with the data (e.g. produce and stage a signature with a mismatched digest)?
 
     # Verify the generated signature against the test data ...
     results = await atomicsigner.atomicverify(digest=digest, image_name=image_name)

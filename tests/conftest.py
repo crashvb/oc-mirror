@@ -17,7 +17,7 @@ from pytest_asyncio.plugin import Mode
 from pytest_docker_registry_fixtures import DockerRegistrySecure
 from pytest_docker_squid_fixtures import SquidSecure
 
-# https://stackoverflow.com/questions/51883573/using-a-command-line-option-in-a-pytest-skip-if-condition
+from .testutils import OCMCliRunner
 
 
 def pytest_addoption(parser):
@@ -187,3 +187,11 @@ async def registry_v2_list_proxy(
             )
 
         yield registry_v2_proxy
+
+
+@pytest.fixture
+def runner() -> Generator[OCMCliRunner, None, None]:
+    """Provides a runner for testing click command line interfaces."""
+    runner = OCMCliRunner()
+    with runner.isolated_filesystem():
+        yield runner

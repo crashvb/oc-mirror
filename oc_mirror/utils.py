@@ -222,7 +222,6 @@ async def read_from_tar(tar_file, tarinfo: tarfile.TarInfo) -> bytes:
     return bytesio.getvalue()
 
 
-# TODO: Backport this method to DSV ...
 async def retrieve_and_verify_release_metadata(
     *,
     digest: FormattedSHA256,
@@ -253,6 +252,7 @@ async def retrieve_and_verify_release_metadata(
         "\n  ".join(locations),
     )
 
+    # TODO: Replace use of gnupg library with raw subprocess (and clean up associated log filtering) ...
     with TemporaryDirectory() as homedir:
         LOGGER.debug("Using trust store: %s", homedir)
         gpg = GPG(
@@ -267,20 +267,10 @@ async def retrieve_and_verify_release_metadata(
 
         # Would be nice if this method was built-in ... =/
         for key in gpg.list_keys():
-            # TODO: Is it worth it to define pretty_bad_protocol._parsers.ImpoortOwnerTrust to validate
-            #       the return value? ... or should we rely solely on crypt.trust_level below?
+            # TODO: Is it worth it to define pretty_bad_protocol._parsers.ImportOwnerTrust to validate
+            #       the return value?
             import_owner_trust(gpg=gpg, trust_data=f"{key['fingerprint']}:6:\n")
 
-        # for key in gpg.list_keys():
-        #     LOGGER.debug(
-        #         "%s   %s%s/%s",
-        #         key["type"],
-        #         "rsa" if int(key["algo"]) < 4 else "???",
-        #         key["length"],
-        #         key["fingerprint"],
-        #     )
-        #     for uid in key["uids"]:
-        #         LOGGER.debug("uid      %s", uid)
         atomic_signer = AtomicSigner(
             docker_registry_client_async=registry_v2.docker_registry_client_async,
             homedir=homedir,

@@ -24,7 +24,7 @@ from oc_mirror.ocrelease import (
     TypingRegexSubstitution,
 )
 
-from .testutils import equal_if_unqualified
+from .testutils import equal_if_unqualified, needs_credentials
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -68,6 +68,7 @@ setattr(asyncio.sslproto._SSLProtocolTransport, "_start_tls_compatible", True)
         )
     ],
 )
+@needs_credentials("quay.io")
 async def test_get_release_metadata(
     registry_v2_proxy: RegistryV2,
     release: str,
@@ -129,6 +130,7 @@ async def test_get_release_metadata(
         )
     ],
 )
+@needs_credentials("quay.io")
 async def test_log_release_metadata(
     caplog: LogCaptureFixture,
     fingerprint: str,
@@ -161,6 +163,7 @@ async def test_log_release_metadata(
 @pytest.mark.parametrize(
     "release", ["quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64"]
 )
+@needs_credentials("quay.io")
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
     registry_v2_proxy: RegistryV2,
@@ -266,6 +269,7 @@ async def test_put_release_from_internet(
 @pytest.mark.parametrize(
     "release", ["quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64"]
 )
+@needs_credentials("quay.io")
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
     registry_v2_list_proxy: RegistryV2,

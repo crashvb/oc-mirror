@@ -24,7 +24,7 @@ from oc_mirror.oprelease import (
     TypingRegexSubstitution,
 )
 
-from .testutils import equal_if_unqualified, get_test_data
+from .testutils import equal_if_unqualified, get_test_data, needs_credentials
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -87,6 +87,7 @@ def known_good_release(request) -> TypingGetTestDataLocal:
 
 
 @pytest.mark.online
+@needs_credentials("registry.redhat.io")
 async def test_get_release_metadata(
     known_good_release: TypingGetTestDataLocal,
     registry_v2_proxy: RegistryV2,
@@ -148,6 +149,7 @@ async def test_get_release_metadata(
         ),
     ],
 )
+@needs_credentials("registry.redhat.io")
 async def test_log_release_metadata(
     bundle_image: str,
     bundle_name: str,
@@ -185,6 +187,7 @@ async def test_log_release_metadata(
 
 
 @pytest.mark.online_modification
+@needs_credentials("registry.redhat.io")
 async def test_put_release_from_internet(
     docker_registry_secure: DockerRegistrySecure,
     known_good_release: TypingGetTestDataLocal,
@@ -260,6 +263,7 @@ async def test_put_release_from_internet(
 
 
 @pytest.mark.online_modification
+@needs_credentials("registry.redhat.io")
 async def test_put_release_from_internal(
     docker_registry_secure_list: List[DockerRegistrySecure],
     known_good_release: TypingGetTestDataLocal,
