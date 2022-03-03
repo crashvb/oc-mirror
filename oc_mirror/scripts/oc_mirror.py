@@ -40,7 +40,7 @@ LOGGER = logging.getLogger(__name__)
 class TypingContextObject(NamedTuple):
     # pylint: disable=missing-class-docstring
     check_signatures: bool
-    registryv2: RegistryV2
+    registry_v2: RegistryV2
     signature_stores: List[str]
     signing_keys: List[str]
     verbosity: int
@@ -100,7 +100,7 @@ def cli(
 
     context.obj = TypingContextObject(
         check_signatures=check_signatures,
-        registryv2=RegistryV2(dry_run=dry_run),
+        registry_v2=RegistryV2(dry_run=dry_run),
         signature_stores=signature_store,
         signing_keys=signing_keys,
         verbosity=verbosity,
@@ -123,7 +123,7 @@ async def dump(
         for img_name in image_name:
             LOGGER.info("Retrieving metadata for release: %s ...", img_name)
             release_metadata = await get_release_metadata(
-                registry_v2=ctx.registryv2,
+                registry_v2=ctx.registry_v2,
                 release_name=img_name,
                 signature_stores=ctx.signature_stores,
                 signing_keys=ctx.signing_keys,
@@ -143,7 +143,7 @@ async def dump(
             print_exception(*exc_info)
         sys.exit(1)
     finally:
-        await ctx.registryv2.close()
+        await ctx.registry_v2.close()
 
     return result
 
@@ -161,7 +161,7 @@ async def mirror(
     try:
         LOGGER.info("Retrieving metadata for release: %s ...", image_name_src)
         release_metadata = await get_release_metadata(
-            registry_v2=ctx.registryv2,
+            registry_v2=ctx.registry_v2,
             release_name=image_name_src,
             signature_stores=ctx.signature_stores,
             signing_keys=ctx.signing_keys,
@@ -180,11 +180,11 @@ async def mirror(
             LOGGER.info("Mirroring release to: %s ...", img_name_dest)
             await put_release(
                 release_name=img_name_dest,
-                registry_v2=ctx.registryv2,
+                registry_v2=ctx.registry_v2,
                 release_metadata=release_metadata_translated,
                 verify=False,  # Already verified above (or not =/) ...
             )
-            if ctx.registryv2.dry_run:
+            if ctx.registry_v2.dry_run:
                 LOGGER.info(
                     "Dry run completed for release: %s", img_name_dest.resolve_name()
                 )
@@ -198,7 +198,7 @@ async def mirror(
             print_exception(*exc_info)
         sys.exit(1)
     finally:
-        await ctx.registryv2.close()
+        await ctx.registry_v2.close()
 
 
 cli.add_command(version)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=protected-access,redefined-outer-name
 
 """OpenShift release tests."""
 
@@ -81,6 +81,7 @@ async def test_get_release_metadata(
     known_good_manifests: Dict[ImageName, str],
     manifest_digest: FormattedSHA256,
 ):
+    # pylint: disable=too-many-arguments
     """Tests release metadata retrieval from a remote registry."""
     logging.getLogger("gnupg").setLevel(logging.FATAL)
 
@@ -396,26 +397,3 @@ async def test_put_release_from_internal(
     assert (
         release_metadata2.signing_keys.sort() == release_metadata0.signing_keys.sort()
     )
-
-
-# async def test_debug_rich(registry_v2_proxy: RegistryV2):
-#     """Tests release replication to a local registry."""
-#
-#     data = [
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", None),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", DockerMediaTypes.DISTRIBUTION_MANIFEST_LIST_V2),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", DockerMediaTypes.DISTRIBUTION_MANIFEST_V2),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", DockerMediaTypes.DISTRIBUTION_MANIFEST_V1),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", DockerMediaTypes.DISTRIBUTION_MANIFEST_V1_SIGNED),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", OCIMediaTypes.IMAGE_INDEX_V1),
-#         ("quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64", OCIMediaTypes.IMAGE_MANIFEST_V1),
-#         ("quay.io/openshift-release-dev/ocp-release@sha256:95d7b75cd8381a7e57cbb3d029b1b057a4a7808419bc84ae0f61175791331906", None)
-#     ]
-#     for _tuple in data:
-#         image_name = ImageName.parse(_tuple[0])
-#         manifest = await registry_v2_proxy.get_manifest(image_name, accept=_tuple[1])
-#         assert manifest
-#         logging.debug("%s", _tuple[1])
-#         logging.debug("\tImage Name : %s", image_name)
-#         logging.debug("\tDigest     : %s", manifest.get_digest())
-#         logging.debug("\tMediaType  : %s", manifest.get_media_type())

@@ -94,6 +94,7 @@ def get_test_data_path(request, name) -> Path:
 
 
 def get_test_data(request, klass, name, mode="rb") -> Union[bytes, str]:
+    # pylint: disable=unspecified-encoding
     """Helper method to retrieve test data."""
     key = f"{klass}/{name}"
     result = request.config.cache.get(key, None)

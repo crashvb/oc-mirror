@@ -7,7 +7,7 @@
 import logging
 
 from time import time
-from typing import Generator, List
+from typing import Generator
 
 import pytest
 
@@ -83,10 +83,10 @@ async def test_simple(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair):
     assert find_all_signatures.signature
     assert find_all_signatures.url
     assert all(
-        [
+        (
             value in find_all_signatures.url
             for value in ["https", digest.replace(":", "="), "signature-"]
-        ]
+        )
     )
 
     # Verify the generated signature against the test data ...
@@ -122,10 +122,10 @@ async def test_bad_data(atomicsigner: AtomicSigner, gnupg_keypair: GnuPGKeypair)
     assert find_all_signatures.signature
     assert find_all_signatures.url
     assert all(
-        [
+        (
             value in find_all_signatures.url
             for value in ["https", digest.replace(":", "="), "signature-"]
-        ]
+        )
     )
 
     # TODO: How to tamper with the data (e.g. produce and stage a signature with a mismatched digest)?

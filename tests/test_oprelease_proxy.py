@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=protected-access,redefined-outer-name
 
 """Operator release tests."""
 
@@ -59,14 +59,16 @@ def get_release_data() -> Generator[TypingGetTestDataLocal, None, None]:
             ],
             signing_keys=[],
         ),
-        # TypingGetTestDataLocal(
-        #     index_name=ImageName.parse(
-        #         "registry.redhat.io/redhat/redhat-operator-index:v4.8"
-        #     ),
-        #     package_channel={"ocs-operator": "eus-4.8"},
-        #     signature_stores = ["https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release"],
-        #     signing_keys = [],
-        # ),
+        TypingGetTestDataLocal(
+            index_name=ImageName.parse(
+                "registry.redhat.io/redhat/redhat-operator-index:v4.8"
+            ),
+            package_channel={"ocs-operator": "eus-4.8"},
+            signature_stores=[
+                "https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release"
+            ],
+            signing_keys=[],
+        ),
     ]
     for data in dataset:
         yield data
@@ -159,6 +161,7 @@ async def test_log_release_metadata(
     related_image: str,
     release: str,
 ):
+    # pylint: disable=too-many-arguments
     """Tests logging of release metadata."""
     caplog.clear()
     caplog.set_level(logging.DEBUG)

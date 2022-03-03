@@ -232,7 +232,7 @@ async def get_release_metadata(
             package_images[package] = [ImageName.parse(row[0]) for row in rows]
         LOGGER.debug(
             "Discovered %d related images.",
-            sum([len(package_images[key]) for key in package_images]),
+            sum([len(value) for key, value in package_images.items()]),
         )
 
     signatures = []

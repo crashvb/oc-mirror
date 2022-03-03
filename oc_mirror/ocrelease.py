@@ -316,7 +316,7 @@ async def get_release_metadata(
     signing_keys: List[str] = None,
     verify: bool = True,
 ) -> TypingGetReleaseMetadata:
-    # pylint: disable=too-many-locals
+    # pylint: disable=protected-access,too-many-locals
     """
     Retrieves all metadata for a given OpenShift release image.
 
