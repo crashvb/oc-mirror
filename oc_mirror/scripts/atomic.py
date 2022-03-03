@@ -28,9 +28,7 @@ from docker_sign_verify.scripts.utils import (
 
 from oc_mirror.atomicsigner import AtomicSignerVerify, AtomicSigner, FindAllSignatures
 
-from .utils import (
-    __version__,
-)
+from .utils import OPENSHIFT_SIGNATURE_STORES, __version__
 
 LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +86,9 @@ def cli(
         verbosity = LOGGING_DEFAULT
 
     set_log_levels(verbosity)
+
+    if not signature_store:
+        signature_store = OPENSHIFT_SIGNATURE_STORES
 
     signing_keys = []
     for path in [Path(x) for x in signing_key]:

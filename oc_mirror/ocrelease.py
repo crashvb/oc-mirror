@@ -19,7 +19,7 @@ from docker_registry_client_async import (
     FormattedSHA256,
     ImageName,
 )
-from docker_sign_verify import ImageConfig, RegistryV2
+from docker_sign_verify import ImageConfig, RegistryV2, RegistryV2ManifestList
 from docker_sign_verify.utils import be_kind_rewind
 
 from .atomicsigner import AtomicSignerVerify
@@ -337,12 +337,16 @@ async def get_release_metadata(
     # TODO: Change assertions to runtime checks.
     LOGGER.debug("Source release image name: %s", release_name)
 
-    # TODO: Manifest list processing ...
     # pkg/cli/image/extract/extract.go:332 - Run()
     # pkg/cli/image/manifest/manifest.go:342 - ProcessManifestList()
 
     # Retrieve the manifest ...
     manifest = await registry_v2.get_manifest(image_name=release_name)
+    if isinstance(manifest, RegistryV2ManifestList):
+        LOGGER.debug("Manifest list digest: %s", manifest.get_digest())
+        manifest = await registry_v2._get_manifest_from_manifest_list(
+            image_name=release_name, manifest_list=manifest
+        )
     manifest_digest = manifest.get_digest()
     LOGGER.debug("Source release manifest digest: %s", manifest_digest)
 

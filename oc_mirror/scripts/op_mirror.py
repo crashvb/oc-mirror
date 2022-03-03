@@ -31,7 +31,7 @@ from oc_mirror.oprelease import (
     TypingRegexSubstitution,
 )
 
-from .utils import version
+from .utils import OPENSHIFT_SIGNATURE_STORES, version
 
 LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +101,9 @@ def cli(
         verbosity = LOGGING_DEFAULT
 
     set_log_levels(verbosity)
+
+    if not signature_store:
+        signature_store = OPENSHIFT_SIGNATURE_STORES
 
     signing_keys = []
     for path in [Path(x) for x in signing_key]:
