@@ -6,6 +6,7 @@ import logging
 import sys
 
 from pathlib import Path
+from re import compile
 from traceback import print_exception
 from typing import List, NamedTuple
 
@@ -25,11 +26,11 @@ from docker_sign_verify.scripts.utils import (
 from oc_mirror.ocrelease import (
     get_release_metadata,
     log_release_metadata,
-    translate_release_metadata,
     put_release,
     TypingGetReleaseMetadata,
     TypingRegexSubstitution,
 )
+from oc_mirror.utils import DEFAULT_TRANSLATION_PATTERNS
 
 from .utils import version
 
@@ -92,6 +93,7 @@ def cli(
         verbosity = LOGGING_DEFAULT
 
     set_log_levels(verbosity)
+    logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     signing_keys = []
     for path in [Path(x) for x in signing_key]:
@@ -110,10 +112,18 @@ def cli(
 @cli.command()
 @click.argument("image_name", callback=to_image_name, nargs=-1, required=True)
 @click.option("--sort-metadata", help="Sort metadata keys.", is_flag=True)
+@click.option(
+    "--translate",
+    help="Translate the registry endpoint(s) based on the index location.",
+    is_flag=True,
+)
 @click.pass_context
 @async_command
 async def dump(
-    context: Context, image_name: List[ImageName], sort_metadata: bool = False
+    context: Context,
+    image_name: List[ImageName],
+    sort_metadata: bool = False,
+    translate: bool = False,
 ) -> List[TypingGetReleaseMetadata]:
     """Dumps the metadata for an OpenShift release(s)."""
     result = []
@@ -122,7 +132,16 @@ async def dump(
     try:
         for img_name in image_name:
             LOGGER.info("Retrieving metadata for release: %s ...", img_name)
+            regex_substitutions = None
+            if translate:
+                regex_substitutions = [
+                    TypingRegexSubstitution(
+                        pattern=compile(pattern), replacement=img_name.endpoint
+                    )
+                    for pattern in DEFAULT_TRANSLATION_PATTERNS
+                ]
             release_metadata = await get_release_metadata(
+                regex_substitutions=regex_substitutions,
                 registry_v2=ctx.registry_v2,
                 release_name=img_name,
                 signature_stores=ctx.signature_stores,
@@ -160,28 +179,26 @@ async def mirror(
     ctx = get_context_object(context)
     try:
         LOGGER.info("Retrieving metadata for release: %s ...", image_name_src)
+        regex_substitutions = [
+            TypingRegexSubstitution(
+                pattern=compile(pattern), replacement=image_name_src.endpoint
+            )
+            for pattern in DEFAULT_TRANSLATION_PATTERNS
+        ]
         release_metadata = await get_release_metadata(
+            regex_substitutions=regex_substitutions,
             registry_v2=ctx.registry_v2,
             release_name=image_name_src,
             signature_stores=ctx.signature_stores,
             signing_keys=ctx.signing_keys,
             verify=ctx.check_signatures,
         )
-        regex_substitutions = [
-            TypingRegexSubstitution(
-                pattern=r"quay\.io", replacement=image_name_src.endpoint
-            )
-        ]
-        release_metadata_translated = await translate_release_metadata(
-            regex_substitutions=regex_substitutions,
-            release_metadata=release_metadata,
-        )
         for img_name_dest in image_name_dest:
             LOGGER.info("Mirroring release to: %s ...", img_name_dest)
             await put_release(
                 release_name=img_name_dest,
                 registry_v2=ctx.registry_v2,
-                release_metadata=release_metadata_translated,
+                release_metadata=release_metadata,
                 verify=False,  # Already verified above (or not =/) ...
             )
             if ctx.registry_v2.dry_run:

@@ -7,6 +7,7 @@
 import asyncio
 import logging
 
+from re import compile
 from typing import Dict, Generator, List, NamedTuple, Optional
 
 import pytest
@@ -20,9 +21,10 @@ from oc_mirror.oprelease import (
     get_release_metadata,
     log_release_metadata,
     put_release,
-    translate_release_metadata,
+    TypingOperatorMetadata,
     TypingRegexSubstitution,
 )
+from oc_mirror.utils import DEFAULT_TRANSLATION_PATTERNS
 
 from .testutils import equal_if_unqualified, get_test_data, needs_credentials
 
@@ -295,27 +297,20 @@ async def test_put_release_from_internal(
         verify=False,
     )
 
-    # Retrieve the release metadata (hop 1) ...
+    # Retrieve the release metadata (hop 1), translate to the second registry ...
+    regex_substitutions = [
+        TypingRegexSubstitution(
+            pattern=compile(pattern),
+            replacement=docker_registry_secure_list[0].endpoint_name,
+        )
+        for pattern in DEFAULT_TRANSLATION_PATTERNS
+    ]
     release_metadata1 = await get_release_metadata(
         index_name=image_name1,
         package_channel=known_good_release.package_channel,
+        regex_substitutions=regex_substitutions,
         registry_v2=registry_v2_list_proxy,
         verify=False,
-    )
-
-    # Translate to the second registry ...
-    regex_substitutions = [
-        TypingRegexSubstitution(
-            pattern=r"quay\.io",
-            replacement=docker_registry_secure_list[0].endpoint_name,
-        ),
-        TypingRegexSubstitution(
-            pattern=r"registry\.redhat\.io",
-            replacement=docker_registry_secure_list[0].endpoint_name,
-        ),
-    ]
-    release_metadata1_translated = await translate_release_metadata(
-        regex_substitutions=regex_substitutions, release_metadata=release_metadata1
     )
 
     # TODO: We need to implement "signing" here, and test with verify=True below ...
@@ -326,14 +321,21 @@ async def test_put_release_from_internal(
     await put_release(
         index_name=image_name2,
         registry_v2=registry_v2_list_proxy,
-        release_metadata=release_metadata1_translated,
+        release_metadata=release_metadata1,
         verify=False,
     )
 
-    # Retrieve the release metadata (hop 2) ...
+    # Retrieve the release metadata (hop 2), translate to the third registry ...
+    regex_substitutions = [
+        TypingRegexSubstitution(
+            pattern=compile(docker_registry_secure_list[0].endpoint_name),
+            replacement=docker_registry_secure_list[1].endpoint,
+        )
+    ]
     release_metadata2 = await get_release_metadata(
         index_name=image_name2,
         package_channel=known_good_release.package_channel,
+        regex_substitutions=regex_substitutions,
         registry_v2=registry_v2_list_proxy,
         verify=False,
     )
@@ -352,9 +354,29 @@ async def test_put_release_from_internal(
     # Release metadata should have the same manifest digest ...
     assert release_metadata2.manifest_digest == release_metadata0.manifest_digest
 
+    # Convert operators to use unqualified image names ...
+    release_metadata0_operators = [
+        TypingOperatorMetadata(
+            bundle=o.bundle,
+            channel=o.channel,
+            images=[image_name.clone().set_endpoint() for image_name in o.images],
+            package=o.package,
+        )
+        for o in release_metadata0.operators
+    ]
+    release_metadata2_operators = [
+        TypingOperatorMetadata(
+            bundle=o.bundle,
+            channel=o.channel,
+            images=[image_name.clone().set_endpoint() for image_name in o.images],
+            package=o.package,
+        )
+        for o in release_metadata2.operators
+    ]
+
     # Release metadata should have the same operators listed ...
-    assert sorted(release_metadata2.operators, key=lambda item: item.package) == sorted(
-        release_metadata0.operators, key=lambda item: item.package
+    assert sorted(release_metadata2_operators, key=lambda item: item.package) == sorted(
+        release_metadata0_operators, key=lambda item: item.package
     )
 
     # The signature stores should be the same ...

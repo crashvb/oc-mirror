@@ -6,6 +6,7 @@ import logging
 import sys
 
 from pathlib import Path
+from re import compile
 from traceback import print_exception
 from typing import Dict, List, NamedTuple, Optional
 
@@ -26,10 +27,10 @@ from oc_mirror.oprelease import (
     get_release_metadata,
     log_release_metadata,
     put_release,
-    translate_release_metadata,
     TypingGetReleaseMetadata,
     TypingRegexSubstitution,
 )
+from oc_mirror.utils import DEFAULT_TRANSLATION_PATTERNS
 
 from .utils import OPENSHIFT_SIGNATURE_STORES, version
 
@@ -101,6 +102,7 @@ def cli(
         verbosity = LOGGING_DEFAULT
 
     set_log_levels(verbosity)
+    logging.getLogger("gnupg").setLevel(logging.FATAL)
 
     if not signature_store:
         signature_store = OPENSHIFT_SIGNATURE_STORES
@@ -142,27 +144,23 @@ async def dump(
 
     try:
         LOGGER.info("Retrieving metadata for index: %s ...", index_name)
+        regex_substitutions = None
+        if translate:
+            regex_substitutions = [
+                TypingRegexSubstitution(
+                    pattern=compile(pattern), replacement=index_name.endpoint
+                )
+                for pattern in DEFAULT_TRANSLATION_PATTERNS
+            ]
         release_metadata = await get_release_metadata(
             index_name=index_name,
             package_channel=_convert_package_channel(package_channel=package_channel),
+            regex_substitutions=regex_substitutions,
             registry_v2=ctx.registry_v2,
             signature_stores=ctx.signature_stores,
             signing_keys=ctx.signing_keys,
             verify=ctx.check_signatures,
         )
-        if translate:
-            regex_substitutions = [
-                TypingRegexSubstitution(
-                    pattern=r"quay\.io", replacement=index_name.endpoint
-                ),
-                TypingRegexSubstitution(
-                    pattern=r"registry\.redhat\.io", replacement=index_name.endpoint
-                ),
-            ]
-            release_metadata = await translate_release_metadata(
-                regex_substitutions=regex_substitutions,
-                release_metadata=release_metadata,
-            )
         await log_release_metadata(
             index_name=index_name,
             release_metadata=release_metadata,
@@ -196,31 +194,27 @@ async def mirror(
     ctx = get_context_object(context)
     try:
         LOGGER.info("Retrieving metadata for index: %s ...", index_name_src)
+        regex_substitutions = [
+            TypingRegexSubstitution(
+                pattern=compile(pattern), replacement=index_name_src.endpoint
+            )
+            for pattern in DEFAULT_TRANSLATION_PATTERNS
+        ]
+
         release_metadata = await get_release_metadata(
             index_name=index_name_src,
             package_channel=_convert_package_channel(package_channel=package_channel),
+            regex_substitutions=regex_substitutions,
             registry_v2=ctx.registry_v2,
             signature_stores=ctx.signature_stores,
             signing_keys=ctx.signing_keys,
             verify=ctx.check_signatures,
         )
-        regex_substitutions = [
-            TypingRegexSubstitution(
-                pattern=r"quay\.io", replacement=index_name_src.endpoint
-            ),
-            TypingRegexSubstitution(
-                pattern=r"registry\.redhat\.io", replacement=index_name_src.endpoint
-            ),
-        ]
-        release_metadata_translated = await translate_release_metadata(
-            regex_substitutions=regex_substitutions,
-            release_metadata=release_metadata,
-        )
         LOGGER.info("Mirroring index to: %s ...", index_name_dest)
         await put_release(
             index_name=index_name_dest,
             registry_v2=ctx.registry_v2,
-            release_metadata=release_metadata_translated,
+            release_metadata=release_metadata,
             verify=False,  # Already verified above (or not =/) ...
         )
         if ctx.registry_v2.dry_run:

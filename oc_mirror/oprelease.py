@@ -7,7 +7,6 @@
 import gzip
 import logging
 import sqlite3
-import re
 import tarfile
 
 from pathlib import Path
@@ -125,6 +124,7 @@ async def get_release_metadata(
     *,
     index_name: ImageName,
     package_channel: Dict[str, str] = None,
+    regex_substitutions: List[TypingRegexSubstitution] = None,
     registry_v2: RegistryV2,
     signature_stores: List[str] = None,
     signing_keys: List[str] = None,
@@ -138,6 +138,7 @@ async def get_release_metadata(
         index_name: The operator release image for which to retrieve the metadata.
         package_channel: Mapping of package names to content channels. Providing 'None' as the channel name will use the
                          default channel from the index database.
+        regex_substitutions: Regular expression substitutions to be applied to source URIs.
         registry_v2: The Registry V2 image source to use to connect.
         signature_stores: A list of signature store uri overrides.
         signing_keys: A list of armored GnuPG trust store overrides.
@@ -252,6 +253,25 @@ async def get_release_metadata(
         )
     else:
         LOGGER.debug("Skipping source release authenticity verification!")
+
+    # Perform requested translations ...
+    if regex_substitutions:
+        LOGGER.debug("Performing %d translations ...", len(regex_substitutions))
+        for regex_substitution in regex_substitutions:
+            index_name = ImageName.parse(
+                regex_substitution.pattern.sub(
+                    regex_substitution.replacement, str(index_name)
+                )
+            )
+            for package in package_images:
+                package_images[package] = [
+                    ImageName.parse(
+                        regex_substitution.pattern.sub(
+                            regex_substitution.replacement, str(image)
+                        )
+                    )
+                    for image in package_images[package]
+                ]
 
     result = TypingGetReleaseMetadata(
         index_database=index_database,
@@ -369,8 +389,7 @@ async def put_release(
     # Replicate all operator images images ...
     for operator in release_metadata.operators:
         for image_name_src in operator.images:
-            image_name_dest = image_name_src.clone()
-            image_name_dest.endpoint = index_name.endpoint
+            image_name_dest = image_name_src.clone().set_endpoint(index_name.endpoint)
             await copy_image(
                 image_name_dest=image_name_dest,
                 image_name_src=image_name_src,
@@ -382,57 +401,4 @@ async def put_release(
         image_name_dest=index_name,
         image_name_src=release_metadata.index_name,
         registry_v2=registry_v2,
-    )
-
-
-async def translate_release_metadata(
-    *,
-    regex_substitutions: List[TypingRegexSubstitution],
-    release_metadata: TypingGetReleaseMetadata,
-    signature_stores: List[str] = None,
-    signing_keys: List[str] = None,
-) -> TypingGetReleaseMetadata:
-    """
-    Translates metadata for a given release to support hop 2-n mirroring.
-
-    Args:
-        regex_substitutions: Regular expression substitutions to be applied to source uris.
-        release_metadata: The metadata for the release to be translated.
-        signature_stores: A list of signature store uri overrides.
-        signing_keys: A list of armored GnuPG trust store overrides.
-
-    Returns:
-        The translated metadata for a given release.
-    """
-    if signature_stores is None:
-        signature_stores = release_metadata.signature_stores
-    if signing_keys is None:
-        signing_keys = release_metadata.signing_keys
-
-    operators = release_metadata.operators
-    for regex_substitution in regex_substitutions:
-        pattern = re.compile(regex_substitution.pattern)
-        operators = [
-            TypingOperatorMetadata(
-                bundle=operator.bundle,
-                channel=operator.channel,
-                images=[
-                    ImageName.parse(
-                        pattern.sub(regex_substitution.replacement, str(image))
-                    )
-                    for image in operator.images
-                ],
-                package=operator.package,
-            )
-            for operator in release_metadata.operators
-        ]
-
-    return TypingGetReleaseMetadata(
-        index_database=release_metadata.index_database,
-        index_name=release_metadata.index_name,
-        manifest_digest=release_metadata.manifest_digest,
-        operators=operators,
-        signatures=release_metadata.signatures,
-        signature_stores=signature_stores,
-        signing_keys=signing_keys,
     )

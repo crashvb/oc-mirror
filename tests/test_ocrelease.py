@@ -6,6 +6,7 @@
 
 import logging
 
+from re import compile
 from typing import Dict, List, Set
 
 import pytest
@@ -19,9 +20,9 @@ from oc_mirror.ocrelease import (
     get_release_metadata,
     log_release_metadata,
     put_release,
-    translate_release_metadata,
     TypingRegexSubstitution,
 )
+from oc_mirror.utils import DEFAULT_TRANSLATION_PATTERNS
 
 from .testutils import equal_if_unqualified, needs_credentials
 
@@ -39,7 +40,7 @@ LOGGER = logging.getLogger(__name__)
             "quay.io/openshift-release-dev/ocp-release:4.4.6-x86_64",
             227,
             109,
-            2,
+            3,
             2,
             1,
             {
@@ -174,8 +175,9 @@ async def test_put_release_from_internet(
     )
 
     # Replicate the release ...
-    image_name_dest = image_name_src.clone()
-    image_name_dest.endpoint = docker_registry_secure.endpoint
+    image_name_dest = image_name_src.clone().set_endpoint(
+        docker_registry_secure.endpoint
+    )
     await put_release(
         release_name=image_name_dest,
         registry_v2=registry_v2,
@@ -210,12 +212,16 @@ async def test_put_release_from_internet(
     )
 
     # Translate the release image tags to a digest for comparison ...
-    image_name_dest_digest = image_name_dest.clone()
-    image_name_dest_digest.digest = release_metadata_dest.manifest_digest
-    image_name_dest_digest.tag = None
-    image_name_src_digest = image_name_src.clone()
-    image_name_src_digest.digest = release_metadata_src.manifest_digest
-    image_name_src_digest.tag = None
+    image_name_dest_digest = (
+        image_name_dest.clone()
+        .set_digest(release_metadata_dest.manifest_digest)
+        .set_tag()
+    )
+    image_name_src_digest = (
+        image_name_src.clone()
+        .set_digest(release_metadata_src.manifest_digest)
+        .set_tag()
+    )
 
     # Release metadata manifest tags should be the same ...
     for image_name in release_metadata_src.manifests.keys():
@@ -281,8 +287,9 @@ async def test_put_release_from_internal(
     )
 
     # Replicate the release (hop 1)...
-    image_name1 = image_name0.clone()
-    image_name1.endpoint = docker_registry_secure_list[0].endpoint
+    image_name1 = image_name0.clone().set_endpoint(
+        docker_registry_secure_list[0].endpoint
+    )
     await put_release(
         release_name=image_name1,
         registry_v2=registry_v2_list,
@@ -290,34 +297,42 @@ async def test_put_release_from_internal(
         verify=False,
     )
 
-    # Retrieve the release metadata (hop 1) ...
+    # Retrieve the release metadata (hop 1), translate to the second registry ...
+    regex_substitutions = [
+        TypingRegexSubstitution(
+            pattern=compile(pattern),
+            replacement=docker_registry_secure_list[0].endpoint,
+        )
+        for pattern in DEFAULT_TRANSLATION_PATTERNS
+    ]
     release_metadata1 = await get_release_metadata(
+        regex_substitutions=regex_substitutions,
         registry_v2=registry_v2_list,
         release_name=image_name1,
         verify=False,
     )
 
-    # Translate to the second registry ...
-    regex_substitutions = [
-        TypingRegexSubstitution(
-            pattern=r"quay\.io", replacement=docker_registry_secure_list[0].endpoint
-        )
-    ]
-    release_metadata1_translated = await translate_release_metadata(
-        regex_substitutions=regex_substitutions, release_metadata=release_metadata1
-    )
-
     # Replicate the release (hop 2) ...
-    image_name2 = image_name0.clone()
-    image_name2.endpoint = docker_registry_secure_list[1].endpoint
+    image_name2 = image_name0.clone().set_endpoint(
+        docker_registry_secure_list[1].endpoint
+    )
     await put_release(
         release_name=image_name2,
         registry_v2=registry_v2_list,
-        release_metadata=release_metadata1_translated,
+        release_metadata=release_metadata1,
     )
 
-    # Retrieve the release metadata (hop 2) ...
+    # Retrieve the release metadata (hop 2), translate to the third registry ...
+    regex_substitutions = [
+        TypingRegexSubstitution(
+            pattern=compile(
+                docker_registry_secure_list[0].endpoint.replace(".", "\\.")
+            ),
+            replacement=docker_registry_secure_list[1].endpoint,
+        )
+    ]
     release_metadata2 = await get_release_metadata(
+        regex_substitutions=regex_substitutions,
         registry_v2=registry_v2_list,
         release_name=image_name2,
     )
@@ -344,25 +359,42 @@ async def test_put_release_from_internal(
     )
 
     # Translate the release image tags to a digest for comparison ...
-    image_name0_digest = image_name0.clone()
-    image_name0_digest.digest = release_metadata0.manifest_digest
-    image_name0_digest.tag = None
-    image_name2_digest = image_name2.clone()
-    image_name2_digest.digest = release_metadata2.manifest_digest
-    image_name2_digest.tag = None
+    image_name0_digest = (
+        image_name0.clone()
+        .set_digest(release_metadata0.manifest_digest)
+        .set_endpoint()
+        .set_tag()
+    )
+    image_name2_digest = (
+        image_name2.clone()
+        .set_digest(release_metadata2.manifest_digest)
+        .set_endpoint()
+        .set_tag()
+    )
+
+    # Convert manifests to use unqualified image names ...
+    release_metadata0_manifests = {
+        ImageName.parse(f"{k.image}@{k.digest}"): v
+        for k, v in release_metadata0.manifests.items()
+    }
+    release_metadata2_manifests = {
+        ImageName.parse(f"{k.image}@{k.digest}"): v
+        for k, v in release_metadata2.manifests.items()
+    }
 
     # Release metadata manifest tags should be the same ...
-    for image_name in release_metadata0.manifests.keys():
+    for image_name in release_metadata0_manifests.keys():
         # Special Case: The release image in imposed in the metadata, not derived ...
         if equal_if_unqualified(image_name, image_name0_digest):
             assert (
-                release_metadata2.manifests[image_name2_digest]
-                == release_metadata0.manifests[image_name0_digest]
+                release_metadata2_manifests[image_name2_digest]
+                == release_metadata0_manifests[image_name0_digest]
             )
         else:
+            # Equality must be unqualified due to image translations ...
             assert (
-                release_metadata2.manifests[image_name]
-                == release_metadata0.manifests[image_name]
+                release_metadata2_manifests[image_name]
+                == release_metadata0_manifests[image_name]
             )
 
     # The raw image references should be the same ...

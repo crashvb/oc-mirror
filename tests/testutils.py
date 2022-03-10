@@ -82,9 +82,8 @@ def equal_if_unqualified(image_name0: ImageName, image_name1: ImageName) -> bool
         True if the images names are equal without considering the endpoint component.
     """
     img_name0 = image_name0.clone()
-    img_name0.endpoint = None
     img_name1 = image_name1.clone()
-    img_name1.endpoint = None
+    img_name0.endpoint = img_name1.endpoint = None
     return str(img_name0) == str(img_name1)
 
 
@@ -113,24 +112,31 @@ def needs_credentials(*credentials):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            param = "registry_v2"
-            if "registry_v2" in kwargs:
-                ...
-                for credential in credentials:
-                    if credential not in str(
-                        kwargs[param].docker_registry_client_async.credentials
-                    ):
-                        pytest.skip(
-                            f"RegistryV2 does not contain required credentials for: {credential}! "
-                            "Verify the default docker credentials store, or the location specified "
-                            "by DRCA_CREDENTIALS_STORE."
-                        )
-            else:
+            param_found = False
+            params = [
+                "registry_v2",
+                "registry_v2_list",
+                "registry_v2_proxy",
+                "registry_v2_list_proxy",
+            ]
+            for param in params:
+                if param in kwargs:
+                    param_found = True
+                    for credential in credentials:
+                        if credential not in str(
+                            kwargs[param].docker_registry_client_async.credentials
+                        ):
+                            pytest.skip(
+                                f"RegistryV2 does not contain required credentials for: {credential}! "
+                                "Verify the default docker credentials store, or the location specified "
+                                "by DRCA_CREDENTIALS_STORE."
+                            )
+            if not param_found:
                 LOGGER.warning(
-                    "Decorator %s used on %s without parameter %s!",
+                    "Decorator %s used on %s without parameter(s): %s!",
                     __name__,
                     func,
-                    param,
+                    params,
                 )
             return await func(*args, **kwargs)
 

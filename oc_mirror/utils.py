@@ -6,6 +6,7 @@ import logging
 import tarfile
 
 from io import BytesIO
+from re import Pattern
 from tempfile import TemporaryDirectory
 from typing import List, NamedTuple
 
@@ -27,6 +28,7 @@ from pretty_bad_protocol._util import _make_binary_stream
 from .atomicsignature import AtomicSignature
 from .atomicsigner import AtomicSigner, AtomicSignerVerify
 
+DEFAULT_TRANSLATION_PATTERNS = [r"quay\.io", r"registry\.redhat\.io"]
 LOGGER = logging.getLogger(__name__)
 
 
@@ -43,7 +45,7 @@ class TypingDetachedSignature(NamedTuple):
 
 class TypingRegexSubstitution(NamedTuple):
     # pylint: disable=missing-class-docstring
-    pattern: str
+    pattern: Pattern
     replacement: str
 
 
@@ -116,12 +118,8 @@ async def copy_image(
     if isinstance(manifest, RegistryV2ManifestList):
         LOGGER.debug("Processing manifest list: %s ...", image_name_src)
         for digest in manifest.get_manifests():
-            img_name_dest = image_name_dest.clone()
-            img_name_dest.digest = digest
-            img_name_dest.tag = None
-            img_name_src = image_name_src.clone()
-            img_name_src.digest = digest
-            img_name_src.tag = None
+            img_name_dest = image_name_dest.clone().set_digest(digest).set_tag()
+            img_name_src = image_name_src.clone().set_digest(digest).set_tag()
             await copy_image(
                 image_name_dest=img_name_dest,
                 image_name_src=img_name_src,
@@ -278,6 +276,7 @@ async def retrieve_and_verify_release_metadata(
         )
 
         LOGGER.debug("Verifying signature(s) against digest: %s", digest)
+        # TODO: How do we account for an process signature_types other than manifest???
         result = await atomic_signer.atomicverify(digest=digest, image_name=image_name)
         for signature in result:
             if not signature.valid:

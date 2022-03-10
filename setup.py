@@ -53,8 +53,8 @@ setup(
     install_requires=[
         "aiofiles",
         "click",
-        "docker-registry-client-async>=0.2.1",
-        "docker-sign-verify>=2.0.2",
+        "docker-registry-client-async>=0.2.3",
+        "docker-sign-verify>=2.0.4",
         "pretty-bad-protocol>=3.1.1",
         "pyyaml",
     ],

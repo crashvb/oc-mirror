@@ -6,7 +6,6 @@
 
 import gzip
 import logging
-import re
 import tarfile
 
 from json import loads
@@ -72,6 +71,7 @@ class TypingSearchLayer(NamedTuple):
 async def _collect_digests(
     *,
     image_references: ImageStream,
+    regex_substitutions: List[TypingRegexSubstitution] = None,
     registry_v2: RegistryV2,
     release_name: ImageName,
 ) -> TypingCollectDigests:
@@ -80,6 +80,7 @@ async def _collect_digests(
 
     Args:
         image_references: The image references for the release.
+        regex_substitutions: Regular expression substitutions to be applied to source URIs.
         registry_v2: The underlying registry v2 image source to use to retrieve the digests.
         release_name: The name of the release image.
 
@@ -96,9 +97,22 @@ async def _collect_digests(
         blobs[_digest].add(i_prefix)
 
     # TODO: Should we split out manifest and blob processing to separate functions?
+    LOGGER.debug(
+        "Performing %d translations ...",
+        len(regex_substitutions) if regex_substitutions else 0,
+    )
     for image_name, name in _get_tag_mapping(
         release_name=release_name, image_references=image_references
     ):
+        # Perform requested translations ...
+        if regex_substitutions:
+            for regex_substitution in regex_substitutions:
+                image_name = ImageName.parse(
+                    regex_substitution.pattern.sub(
+                        regex_substitution.replacement, str(image_name)
+                    )
+                )
+
         # Convert tags to digests
         # pkg/cli/image/mirror/mirror.go:437 - plan()
         digest = image_name.digest
@@ -310,6 +324,7 @@ async def _search_layer(
 
 async def get_release_metadata(
     *,
+    regex_substitutions: List[TypingRegexSubstitution] = None,
     registry_v2: RegistryV2,
     release_name: ImageName,
     signature_stores: List[str] = None,
@@ -321,6 +336,7 @@ async def get_release_metadata(
     Retrieves all metadata for a given OpenShift release image.
 
     Args:
+        regex_substitutions: Regular expression substitutions to be applied to source URIs.
         registry_v2: The Registry V2 image source to use to connect.
         release_name: The OpenShift release image for which to retrieve the metadata.
         signature_stores: A list of signature store uri overrides.
@@ -407,6 +423,7 @@ async def get_release_metadata(
 
     tmp = await _collect_digests(
         image_references=image_references,
+        regex_substitutions=regex_substitutions,
         registry_v2=registry_v2,
         release_name=release_name,
     )
@@ -453,16 +470,10 @@ async def log_release_metadata(
         release_metadata: The metadata for the release to be logged.
         sort_metadata: If True, the metadata keys will be sorted.
     """
-
-    def make_image_name(img_name: ImageName, tag: str):
-        result = img_name.clone()
-        result.tag = tag
-        return result
-
     LOGGER.info(release_name)
     LOGGER.info("  manifests:")
     manifests = [
-        make_image_name(image_name, tag)
+        image_name.clone().set_tag(tag)
         for image_name, tag in release_metadata.manifests.items()
     ]
     if sort_metadata:
@@ -540,9 +551,8 @@ async def put_release(
         # TODO: Handle blob mounting ...
         for image_prefix in image_prefixes:
             image_name_src = ImageName.parse(image_prefix)
-            image_name_dest = image_name_src.clone()
             # Note: Only update the endpoint; keep the digest and image the same
-            image_name_dest.endpoint = release_name.endpoint
+            image_name_dest = image_name_src.clone().set_endpoint(release_name.endpoint)
 
             if (
                 last_image_name_dest != image_name_dest
@@ -573,52 +583,3 @@ async def put_release(
             image_name_src=image_name_src,
             registry_v2=registry_v2,
         )
-
-
-async def translate_release_metadata(
-    *,
-    regex_substitutions: List[TypingRegexSubstitution],
-    release_metadata: TypingGetReleaseMetadata,
-    signature_stores: List[str] = None,
-    signing_keys: List[str] = None,
-) -> TypingGetReleaseMetadata:
-    """
-    Translates metadata for a given release to support hop 2-n mirroring.
-
-    Args:
-        regex_substitutions: Regular expression substitutions to be applied to source uris.
-        release_metadata: The metadata for the release to be translated.
-        signature_stores: A list of signature store uri overrides.
-        signing_keys: A list of armored GnuPG trust store overrides.
-
-    Returns:
-        The translated metadata for a given release.
-    """
-    if signature_stores is None:
-        signature_stores = release_metadata.signature_stores
-    if signing_keys is None:
-        signing_keys = release_metadata.signing_keys
-
-    blobs = release_metadata.blobs
-    manifests = release_metadata.manifests
-    for regex_substitution in regex_substitutions:
-        pattern = re.compile(regex_substitution.pattern)
-        blobs = {
-            k: {pattern.sub(regex_substitution.replacement, x) for x in v}
-            for (k, v) in release_metadata.blobs.items()
-        }
-        manifests = {
-            ImageName.parse(pattern.sub(regex_substitution.replacement, str(k))): v
-            for (k, v) in release_metadata.manifests.items()
-        }
-
-    return TypingGetReleaseMetadata(
-        blobs=blobs,
-        manifest_digest=release_metadata.manifest_digest,
-        manifests=manifests,
-        raw_image_references=release_metadata.raw_image_references,
-        raw_release_metadata=release_metadata.raw_release_metadata,
-        signatures=release_metadata.signatures,
-        signature_stores=signature_stores,
-        signing_keys=signing_keys,
-    )
