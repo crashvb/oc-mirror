@@ -1,12 +1,16 @@
 # oc-mirror
 
+[![pypi version](https://img.shields.io/pypi/v/oc-mirror.svg)](https://pypi.org/project/oc-mirror)
+[![build status](https://img.shields.io/travis/crashvb/oc-mirror.svg)](https://app.travis-ci.com/github/crashvb/oc-mirror)
+[![coverage status](https://coveralls.io/repos/github/crashvb/oc-mirror/badge.svg)](https://coveralls.io/github/crashvb/oc-mirror)
+[![python versions](https://img.shields.io/pypi/pyversions/oc-mirror.svg)](https://pypi.org/project/oc-mirror)
+[![linting](https://img.shields.io/badge/linting-pylint-yellowgreen)](https://github.com/PyCQA/pylint)
+[![code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![license](https://img.shields.io/github/license/crashvb/oc-mirror.svg)](https://github.com/crashvb/oc-mirror/blob/master/LICENSE.md)
+
 ## Overview
 
 A utility that can be used to mirror OpenShift releases, Operator releases, and atomic signatures between docker registries.
-
-## Compatibility
-
-* Tested with python 3.8
 
 ## Installation
 ### From [pypi.org](https://pypi.org/project/oc-mirror/)

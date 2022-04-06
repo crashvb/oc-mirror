@@ -56,7 +56,9 @@ async def docker_registry_client_async_proxy(
             apache_secure.endpoint,
             apache_secure.endpoint_name,
         ]:
-            await docker_registry_client_async.add_credentials(name, credentials)
+            await docker_registry_client_async.add_credentials(
+                credentials=credentials, endpoint=name
+            )
         docker_registry_client_async.proxies[
             "https"
         ] = f"https://{squid_secure.endpoint}/"

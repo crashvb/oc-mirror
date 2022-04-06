@@ -16,7 +16,7 @@ from tempfile import NamedTemporaryFile
 import certifi
 import pytest
 
-from docker_registry_client_async import DockerRegistryClientAsync, ImageName
+from docker_registry_client_async import ImageName
 from docker_sign_verify import FormattedSHA256
 from pytest_docker_apache_fixtures import ApacheSecure
 from pytest_gnupg_fixtures import GnuPGKeypair

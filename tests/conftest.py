@@ -101,7 +101,7 @@ async def registry_v2(
     async with RegistryV2(ssl=ssl_context) as registry_v2:
         credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
         await registry_v2.docker_registry_client_async.add_credentials(
-            docker_registry_secure.endpoint, credentials
+            credentials=credentials, endpoint=docker_registry_secure.endpoint
         )
 
         yield registry_v2
@@ -125,7 +125,7 @@ async def registry_v2_proxy(
             docker_registry_secure.endpoint_name,
         ]:
             await registry_v2_proxy.docker_registry_client_async.add_credentials(
-                name, credentials
+                credentials=credentials, endpoint=name
             )
         registry_v2_proxy.docker_registry_client_async.proxies[
             "https"
@@ -150,7 +150,7 @@ async def registry_v2_list(
         for docker_registry_secure in docker_registry_secure_list:
             credentials = docker_registry_secure.auth_header["Authorization"].split()[1]
             await registry_v2.docker_registry_client_async.add_credentials(
-                docker_registry_secure.endpoint, credentials
+                credentials=credentials, endpoint=docker_registry_secure.endpoint
             )
 
         yield registry_v2
@@ -176,7 +176,7 @@ async def registry_v2_list_proxy(
                 docker_registry_secure.endpoint_name,
             ]:
                 await registry_v2_proxy.docker_registry_client_async.add_credentials(
-                    name, credentials
+                    credentials=credentials, endpoint=name
                 )
         for squid_secure in squid_secure_list:
             registry_v2_proxy.docker_registry_client_async.proxies[

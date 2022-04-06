@@ -38,7 +38,7 @@ async def docker_registry_client_async(
     ) as docker_registry_client_async:
         credentials = apache_secure.auth_header["Authorization"].split()[1]
         await docker_registry_client_async.add_credentials(
-            f"https://{apache_secure.endpoint}", credentials
+            credentials=credentials, endpoint=f"https://{apache_secure.endpoint}"
         )
         yield docker_registry_client_async
 
