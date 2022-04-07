@@ -20,7 +20,7 @@ from docker_sign_verify import GPGTrust
 from pytest_docker_apache_fixtures import ApacheSecure
 from pytest_gnupg_fixtures import GnuPGKeypair
 
-from oc_mirror import AtomicSigner
+from oc_mirror.atomicsigner import AtomicSigner
 
 pytestmark = [pytest.mark.asyncio]
 

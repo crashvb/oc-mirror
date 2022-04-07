@@ -263,7 +263,7 @@ async def get_release_metadata(
                     regex_substitution.replacement, str(index_name)
                 )
             )
-            for package in package_images:
+            for package in package_images[:]:
                 package_images[package] = [
                     ImageName.parse(
                         regex_substitution.pattern.sub(

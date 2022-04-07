@@ -3,10 +3,10 @@
 """Operator mirror command line interface."""
 
 import logging
+import re
 import sys
 
 from pathlib import Path
-from re import compile
 from traceback import print_exception
 from typing import Dict, List, NamedTuple, Optional
 
@@ -47,6 +47,7 @@ class TypingContextObject(NamedTuple):
 
 
 def _convert_package_channel(*, package_channel: Optional[List[str]]) -> Dict[str, str]:
+    # pylint: disable=unnecessary-comprehension
     """Convert tuple of ":" separated pairs into a dictionary, or None."""
     if package_channel:
         package_channel = [
@@ -148,7 +149,7 @@ async def dump(
         if translate:
             regex_substitutions = [
                 TypingRegexSubstitution(
-                    pattern=compile(pattern), replacement=index_name.endpoint
+                    pattern=re.compile(pattern), replacement=index_name.endpoint
                 )
                 for pattern in DEFAULT_TRANSLATION_PATTERNS
             ]
@@ -196,7 +197,7 @@ async def mirror(
         LOGGER.info("Retrieving metadata for index: %s ...", index_name_src)
         regex_substitutions = [
             TypingRegexSubstitution(
-                pattern=compile(pattern), replacement=index_name_src.endpoint
+                pattern=re.compile(pattern), replacement=index_name_src.endpoint
             )
             for pattern in DEFAULT_TRANSLATION_PATTERNS
         ]

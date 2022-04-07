@@ -238,6 +238,7 @@ class AtomicSigner(GPGSigner):
         digest: FormattedSHA256,
         image_name: ImageName,
     ) -> Optional[ValueError]:
+        # pylint: disable=unused-argument
         """
         Verifies an atomic signature against a given digest and image name.
         pkg/verify/verify.go:382: - verifyAtomicContainerSignature()

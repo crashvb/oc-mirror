@@ -2,8 +2,9 @@
 
 """Utility classes."""
 
-import click
 from textwrap import dedent
+
+import click
 
 from oc_mirror import __version__
 
@@ -19,7 +20,6 @@ def version():
         dedent(
             f"""\
             oc-mirror {__version__}
-            
             Copyright (C) 2020-2022  Richard Davis
             License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>
             This program comes with ABSOLUTELY NO WARRANTY.

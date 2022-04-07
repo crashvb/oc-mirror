@@ -3,10 +3,10 @@
 """OpenShift mirror command line interface."""
 
 import logging
+import re
 import sys
 
 from pathlib import Path
-from re import compile
 from traceback import print_exception
 from typing import List, NamedTuple
 
@@ -136,7 +136,7 @@ async def dump(
             if translate:
                 regex_substitutions = [
                     TypingRegexSubstitution(
-                        pattern=compile(pattern), replacement=img_name.endpoint
+                        pattern=re.compile(pattern), replacement=img_name.endpoint
                     )
                     for pattern in DEFAULT_TRANSLATION_PATTERNS
                 ]
@@ -181,7 +181,7 @@ async def mirror(
         LOGGER.info("Retrieving metadata for release: %s ...", image_name_src)
         regex_substitutions = [
             TypingRegexSubstitution(
-                pattern=compile(pattern), replacement=image_name_src.endpoint
+                pattern=re.compile(pattern), replacement=image_name_src.endpoint
             )
             for pattern in DEFAULT_TRANSLATION_PATTERNS
         ]

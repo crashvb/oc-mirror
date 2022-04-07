@@ -24,7 +24,7 @@ from pytest_docker_apache_fixtures import ApacheSecure
 from pytest_gnupg_fixtures import GnuPGKeypair
 from pytest_docker_squid_fixtures import SquidSecure
 
-from oc_mirror import AtomicSigner
+from oc_mirror.atomicsigner import AtomicSigner
 
 pytestmark = [pytest.mark.asyncio]
 

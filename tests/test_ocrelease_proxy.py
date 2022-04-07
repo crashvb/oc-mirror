@@ -6,8 +6,8 @@
 
 import asyncio
 import logging
+import re
 
-from re import compile
 from typing import Dict, List, Set
 
 import pytest
@@ -308,7 +308,7 @@ async def test_put_release_from_internal(
     # Retrieve the release metadata (hop 1), translate to the second registry ...
     regex_substitutions = [
         TypingRegexSubstitution(
-            pattern=compile(pattern),
+            pattern=re.compile(pattern),
             replacement=docker_registry_secure_list[0].endpoint_name,
         )
         for pattern in DEFAULT_TRANSLATION_PATTERNS
@@ -333,7 +333,7 @@ async def test_put_release_from_internal(
     # Retrieve the release metadata (hop 2), translate to the third registry ...
     regex_substitutions = [
         TypingRegexSubstitution(
-            pattern=compile(docker_registry_secure_list[0].endpoint_name),
+            pattern=re.compile(docker_registry_secure_list[0].endpoint_name),
             replacement=docker_registry_secure_list[1].endpoint_name,
         )
     ]

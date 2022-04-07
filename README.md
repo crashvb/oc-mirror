@@ -1,12 +1,12 @@
 # oc-mirror
 
 [![pypi version](https://img.shields.io/pypi/v/oc-mirror.svg)](https://pypi.org/project/oc-mirror)
-[![build status](https://img.shields.io/travis/crashvb/oc-mirror.svg)](https://app.travis-ci.com/github/crashvb/oc-mirror)
+[![build status](https://github.com/crashvb/oc-mirror/actions/workflows/main.yml/badge.svg)](https://github.com/crashvb/oc-mirror/actions)
 [![coverage status](https://coveralls.io/repos/github/crashvb/oc-mirror/badge.svg)](https://coveralls.io/github/crashvb/oc-mirror)
-[![python versions](https://img.shields.io/pypi/pyversions/oc-mirror.svg)](https://pypi.org/project/oc-mirror)
+[![python versions](https://img.shields.io/pypi/pyversions/oc-mirror.svg?logo=python&logoColor=FBE072)](https://pypi.org/project/oc-mirror)
 [![linting](https://img.shields.io/badge/linting-pylint-yellowgreen)](https://github.com/PyCQA/pylint)
 [![code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![license](https://img.shields.io/github/license/crashvb/oc-mirror.svg)](https://github.com/crashvb/oc-mirror/blob/master/LICENSE.md)
+[![license](https://img.shields.io/github/license/crashvb/oc-mirror.svg)](https://github.com/crashvb/oc-mirror/blob/master/LICENSE)
 
 ## Overview
 
