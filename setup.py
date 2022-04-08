@@ -77,7 +77,6 @@ setup(
         "pyopenssl",
         "pytest",
         "pytest-asyncio",
-        "pytest-cov",
         "pytest-docker-apache-fixtures",
         "pytest-docker-registry-fixtures",
         "pytest-docker-squid-fixtures",
