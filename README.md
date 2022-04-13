@@ -82,15 +82,15 @@ op-mirror \
 
 | Variable | Default Value | Description |
 | ---------| ------------- | ----------- |
-| ATOMIC_KEYID | | Identifier of the GnuPG key to use for signing.|
-| ATOMIC_KEYPASS | | The corresponding key passphrase. |
-| ATOMIC_SIGNATURE_STORE | https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release | Signature store location at which atomic signatures are (to be) located. |
-| ATOMIC_SIGNATURE_TYPE | iamge-config | Whether atomic signature digest reference Manifests or Image Configurations. |
-| ATOMIC_SIGNING_KEY | | Path to the GnuPG armored keys used to verify atomic signatures. |
-| OCM_SIGNATURE_STORE | _use locations embedded in release metadata_ | Signature store location at which atomic signatures are located. |
-| OCM_SIGNING_KEY | _use keys embedded in release metadata_ | Path to the GnuPG armored keys used to verify atomic signatures. |
-| OPM_SIGNATURE_STORE | https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release | Signature store location at which atomic signatures are located. |
-| OPM_SIGNING_KEY | | Path to the GnuPG armored keys used to verify atomic signatures. |
+| ATOMIC\_KEYID | | Identifier of the GnuPG key to use for signing.|
+| ATOMIC\_KEYPASS | | The corresponding key passphrase. |
+| ATOMIC\_SIGNATURE\_STORE | https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release | Signature store location at which atomic signatures are (to be) located. |
+| ATOMIC\_SIGNATURE\_TYPE | iamge-config | Whether atomic signature digest reference Manifests or Image Configurations. |
+| ATOMIC\_SIGNING\_KEY | | Path to the GnuPG armored keys used to verify atomic signatures. |
+| OCM\_SIGNATURE\_STORE | _use locations embedded in release metadata_ | Signature store location at which atomic signatures are located. |
+| OCM\_SIGNING\_KEY | _use keys embedded in release metadata_ | Path to the GnuPG armored keys used to verify atomic signatures. |
+| OPM\_SIGNATURE\_STORE | https://mirror.openshift.com/pub/openshift-v4/signatures/openshift/release | Signature store location at which atomic signatures are located. |
+| OPM\_SIGNING\_KEY | | Path to the GnuPG armored keys used to verify atomic signatures. |
 
 ## Development
 
