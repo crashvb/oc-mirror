@@ -205,30 +205,34 @@ async def _get_security_information(
 
         # ... for all matching files found, parse them ...
         _bytes = await read_from_tar(tar_file, tarinfo)
-        if path.suffix == ".json":
-            documents = [loads(_bytes)]
-        else:
-            documents = load_all(_bytes, SafeLoader)
+        documents = []
+        try:
+            if path.suffix == ".json":
+                documents = [loads(_bytes)]
+            else:
+                documents = load_all(_bytes, SafeLoader)
 
-        # ... and look for a root-level "data" key ...
-        for document in documents:
-            if not document:
-                continue
-            if document.get("kind", "") != "ConfigMap":
-                continue
-            if (
-                OpenShiftReleaseSpecs.RELEASE_ANNOTATION_CONFIG_MAP_VERIFIER
-                not in document.get("metadata", []).get("annotations", [])
-            ):
-                continue
-            LOGGER.debug("Found release security information: %s", path)
-            for key, value in document.get("data", {}).items():
-                if key.startswith("verifier-public-key-"):
-                    # LOGGER.debug("Found in %s:\n%s %s", path.name, key, value)
-                    keys.append(value)
-                if key.startswith("store-"):
-                    # LOGGER.debug("Found in %s:\n%s\n%s", path.name, key, value)
-                    locations.append(value)
+            # ... and look for a root-level "data" key ...
+            for document in documents:
+                if not document:
+                    continue
+                if document.get("kind", "") != "ConfigMap":
+                    continue
+                if (
+                    OpenShiftReleaseSpecs.RELEASE_ANNOTATION_CONFIG_MAP_VERIFIER
+                    not in document.get("metadata", []).get("annotations", [])
+                ):
+                    continue
+                LOGGER.debug("Found release security information: %s", path)
+                for key, value in document.get("data", {}).items():
+                    if key.startswith("verifier-public-key-"):
+                        # LOGGER.debug("Found in %s:\n%s %s", path.name, key, value)
+                        keys.append(value)
+                    if key.startswith("store-"):
+                        # LOGGER.debug("Found in %s:\n%s\n%s", path.name, key, value)
+                        locations.append(value)
+        except:  # pylint: disable=bare-except
+            LOGGER.warning(f"Unable to parse file: {path}")
     return TypingGetSecurityInformation(keys=keys, locations=locations)
 
 
